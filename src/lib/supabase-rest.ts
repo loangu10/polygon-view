@@ -5,8 +5,13 @@ type FetchPageOptions = {
   countMode?: CountMode;
   from?: number;
   query?: Record<string, QueryValue>;
+  revalidateSeconds?: number;
   to?: number;
 };
+
+const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DEFAULT_REVALIDATE_SECONDS = 45;
+const SUPABASE_MAX_RETRIES = 2;
 
 export function hasSupabaseConfig() {
   return Boolean(process.env.SUPABASE_REST_URL && process.env.SUPABASE_API_KEY);
@@ -52,6 +57,24 @@ function parseCount(contentRange: string | null) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function shouldRetry(status: number, message: string) {
+  const normalizedMessage = message.toLowerCase();
+
+  if (RETRYABLE_STATUS_CODES.has(status)) {
+    return true;
+  }
+
+  return (
+    normalizedMessage.includes("statement timeout") ||
+    normalizedMessage.includes('"code":"57014"') ||
+    normalizedMessage.includes('"code": "57014"')
+  );
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function fetchSupabasePage<T>(
   table: string,
   options: FetchPageOptions = {},
@@ -64,28 +87,40 @@ export async function fetchSupabasePage<T>(
     }
   });
 
-  const response = await fetch(url, {
-    cache: "no-store",
-    headers: {
-      ...getSupabaseHeaders(options.countMode),
-      ...(options.from !== undefined && options.to !== undefined
-        ? {
-            Range: `${options.from}-${options.to}`,
-            "Range-Unit": "items",
-          }
-        : {}),
-    },
-  });
+  for (let attempt = 0; attempt <= SUPABASE_MAX_RETRIES; attempt += 1) {
+    const response = await fetch(url, {
+      headers: {
+        ...getSupabaseHeaders(options.countMode),
+        ...(options.from !== undefined && options.to !== undefined
+          ? {
+              Range: `${options.from}-${options.to}`,
+              "Range-Unit": "items",
+            }
+          : {}),
+      },
+      next: {
+        revalidate: options.revalidateSeconds ?? DEFAULT_REVALIDATE_SECONDS,
+      },
+    });
 
-  if (!response.ok) {
+    if (response.ok) {
+      return {
+        count: parseCount(response.headers.get("content-range")),
+        data: (await response.json()) as T[],
+      };
+    }
+
     const message = await response.text();
+
+    if (attempt < SUPABASE_MAX_RETRIES && shouldRetry(response.status, message)) {
+      await sleep(300 * 2 ** attempt);
+      continue;
+    }
+
     throw new Error(`Supabase REST ${table} failed (${response.status}): ${message}`);
   }
 
-  return {
-    count: parseCount(response.headers.get("content-range")),
-    data: (await response.json()) as T[],
-  };
+  throw new Error(`Supabase REST ${table} failed after retries.`);
 }
 
 export async function fetchSupabaseSlice<T>(
@@ -94,6 +129,7 @@ export async function fetchSupabaseSlice<T>(
     countMode?: CountMode;
     limit: number;
     query: Record<string, QueryValue>;
+    revalidateSeconds?: number;
   },
 ) {
   return fetchSupabasePage<T>(table, {
@@ -103,6 +139,7 @@ export async function fetchSupabaseSlice<T>(
       ...options.query,
       limit: options.limit,
     },
+    revalidateSeconds: options.revalidateSeconds,
     to: Math.max(options.limit - 1, 0),
   });
 }
@@ -111,8 +148,10 @@ export async function fetchSupabaseRows<T>(
   table: string,
   query: Record<string, QueryValue>,
   options: {
+    countMode?: CountMode;
     maxRows?: number;
     pageSize?: number;
+    revalidateSeconds?: number;
   } = {},
 ) {
   const pageSize = options.pageSize ?? 1000;
@@ -125,9 +164,10 @@ export async function fetchSupabaseRows<T>(
         ? from + pageSize - 1
         : Math.min(from + pageSize - 1, maxRows - 1);
     const page = await fetchSupabasePage<T>(table, {
-      countMode: from === 0 ? "planned" : false,
+      countMode: from === 0 ? (options.countMode ?? false) : false,
       from,
       query,
+      revalidateSeconds: options.revalidateSeconds,
       to,
     });
 

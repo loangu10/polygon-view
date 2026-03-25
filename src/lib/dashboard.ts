@@ -150,6 +150,19 @@ type DashboardSummary = {
   wins: number;
 };
 
+type DashboardQueryValue = boolean | number | string | null | undefined;
+
+const DASHBOARD_PAGE_SIZE = 500;
+const DASHBOARD_REVALIDATE_SECONDS = 45;
+const RECENT_SLICE_LIMIT = 12;
+
+const SUMMARY_SELECT =
+  "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_pnl_usdc,win_flag";
+const RECENT_BETS_SELECT =
+  "fact_key,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
+const RESULTS_SELECT =
+  "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
+
 function clampRange(value: string | string[] | undefined): DashboardRange {
   const candidate = Array.isArray(value) ? value[0] : value;
   const parsed = Number(candidate);
@@ -257,6 +270,126 @@ function isDuplicateLiveSkip(row: StrategyBetPerformanceRow) {
   return (row.last_error_message ?? "")
     .toLowerCase()
     .includes("skipped duplicate polymarket bet");
+}
+
+function buildWindowClause(
+  column: "collected_at_event" | "collected_at_poly",
+  start: string,
+  end?: string,
+  prefix: string[] = [],
+) {
+  const clauses = [...prefix, `${column}.gte.${start}`];
+
+  if (end) {
+    clauses.push(`${column}.lt.${end}`);
+  }
+
+  return `(${clauses.join(",")})`;
+}
+
+function byNewestWindowTimestamp(left: StrategyBetPerformanceRow, right: StrategyBetPerformanceRow) {
+  return (
+    new Date(getWindowTimestamp(right) ?? 0).getTime() -
+    new Date(getWindowTimestamp(left) ?? 0).getTime()
+  );
+}
+
+async function fetchStrategyWindowRows(
+  start: string,
+  options: {
+    countMode?: false | "planned";
+    end?: string;
+    maxRows?: number;
+    order?: string;
+    pageSize?: number;
+    query?: Record<string, DashboardQueryValue>;
+    select: string;
+  },
+) {
+  const baseQuery = {
+    is_bet_signal: "eq.true",
+    select: options.select,
+    ...(options.order ? { order: options.order } : {}),
+    ...(options.query ?? {}),
+  };
+
+  const [polyRows, eventRows] = await Promise.all([
+    fetchSupabaseRows<StrategyBetPerformanceRow>(
+      "strategy_bet_performance",
+      {
+        ...baseQuery,
+        and: buildWindowClause("collected_at_poly", start, options.end, [
+          "collected_at_poly.not.is.null",
+        ]),
+      },
+      {
+        countMode: options.countMode ?? false,
+        maxRows: options.maxRows,
+        pageSize: options.pageSize ?? DASHBOARD_PAGE_SIZE,
+        revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+      },
+    ),
+    fetchSupabaseRows<StrategyBetPerformanceRow>(
+      "strategy_bet_performance",
+      {
+        ...baseQuery,
+        and: buildWindowClause("collected_at_event", start, options.end, [
+          "collected_at_poly.is.null",
+        ]),
+      },
+      {
+        countMode: options.countMode ?? false,
+        maxRows: options.maxRows,
+        pageSize: options.pageSize ?? DASHBOARD_PAGE_SIZE,
+        revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+      },
+    ),
+  ]);
+
+  return [...polyRows, ...eventRows];
+}
+
+async function fetchStrategyWindowSlice(
+  start: string,
+  options: {
+    end?: string;
+    limit: number;
+    order: string;
+    query?: Record<string, DashboardQueryValue>;
+    select: string;
+  },
+) {
+  const baseQuery = {
+    is_bet_signal: "eq.true",
+    order: options.order,
+    select: options.select,
+    ...(options.query ?? {}),
+  };
+
+  const [polyPage, eventPage] = await Promise.all([
+    fetchSupabaseSlice<StrategyBetPerformanceRow>("strategy_bet_performance", {
+      limit: options.limit,
+      query: {
+        ...baseQuery,
+        and: buildWindowClause("collected_at_poly", start, options.end, [
+          "collected_at_poly.not.is.null",
+        ]),
+      },
+      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+    }),
+    fetchSupabaseSlice<StrategyBetPerformanceRow>("strategy_bet_performance", {
+      limit: options.limit,
+      query: {
+        ...baseQuery,
+        and: buildWindowClause("collected_at_event", start, options.end, [
+          "collected_at_poly.is.null",
+        ]),
+      },
+      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+    }),
+  ]);
+
+  return [...polyPage.data, ...eventPage.data];
 }
 
 function getLiveBetErrorMessage(row: StrategyBetPerformanceRow) {
@@ -500,21 +633,45 @@ function getRunDurationSeconds(run: SourceRunRow) {
   ) / 1000;
 }
 
+async function fetchPlacedCountsByRun(sourceRuns: SourceRunRow[]) {
+  const runStarts = sourceRuns.map((run) => run.run_started_at).filter(Boolean);
+
+  if (runStarts.length === 0) {
+    return new Map<string, number>();
+  }
+
+  const rows = await fetchSupabaseRows<StrategyBetPerformanceRow>(
+    "strategy_bet_performance",
+    {
+      live_bet_placed: "eq.true",
+      or: `(${runStarts.map((runStartedAt) => `collected_at_event.eq.${runStartedAt}`).join(",")})`,
+      select: "collected_at_event,signal_count",
+    },
+    {
+      pageSize: 250,
+      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+    },
+  );
+
+  return rows.reduce((counts, row) => {
+    if (!row.collected_at_event) {
+      return counts;
+    }
+
+    const nextCount = (counts.get(row.collected_at_event) ?? 0) + (toNullableNumber(row.signal_count) ?? 1);
+    counts.set(row.collected_at_event, nextCount);
+    return counts;
+  }, new Map<string, number>());
+}
+
 function buildLatestRuns(
-  rows: StrategyBetPerformanceRow[],
+  placedCounts: Map<string, number>,
   sourceRuns: SourceRunRow[],
 ): DashboardJobRun[] {
   return sourceRuns.map((run) => ({
     durationSeconds: getRunDurationSeconds(run),
     id: run.id,
-    placedCount: rows.reduce(
-      (total, row) =>
-        total +
-        (row.live_bet_placed === true && row.collected_at_event === run.run_started_at
-          ? toNullableNumber(row.signal_count) ?? 1
-          : 0),
-      0,
-    ),
+    placedCount: placedCounts.get(run.run_started_at) ?? 0,
     startedAt: run.run_started_at,
     status: (run.status ?? "unknown").toLowerCase(),
   }));
@@ -574,6 +731,34 @@ function buildRecentResults(rows: StrategyBetPerformanceRow[]) {
     }));
 }
 
+function getLatestTimestamp(rows: StrategyBetPerformanceRow[]) {
+  return rows.reduce<string | null>((latest, row) => {
+    const timestamp = getWindowTimestamp(row);
+
+    if (!timestamp) {
+      return latest;
+    }
+
+    if (!latest || timestamp > latest) {
+      return timestamp;
+    }
+
+    return latest;
+  }, null);
+}
+
+async function loadQuery<T>(label: string, operation: () => Promise<T>) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`${label}: ${error.message}`);
+    }
+
+    throw new Error(`${label}: ${String(error)}`);
+  }
+}
+
 function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardData {
   return {
     generatedAt: new Date().toISOString(),
@@ -617,65 +802,72 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
   const currentStart = subtractDays(now, rangeDays).toISOString();
 
   try {
-    const [rows, sourceRunsPage] = await Promise.all([
-      fetchSupabaseRows<StrategyBetPerformanceRow>("strategy_bet_performance", {
-        is_bet_signal: "eq.true",
-        order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast",
-        or: `(collected_at_poly.gte.${comparisonStart},collected_at_event.gte.${comparisonStart})`,
-        select:
-          "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,last_attempted_at,first_successful_attempted_at,strategy_name,strategy_threshold,sport,competition,is_bet_signal,signal_count,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,last_error_message,settlement_status,outcome_label,resolved_outcome_label,pm_team_1,pm_team_2,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,actual_realized_roi,actual_realized_roi_estimated,theoretical_stake_usdc,theoretical_pnl_usdc,theoretical_roi,edge_vs_gmean,win_flag,loss_flag,pending_flag",
+    const currentRows = await loadQuery("Current summary window query", () =>
+      fetchStrategyWindowRows(currentStart, {
+        select: SUMMARY_SELECT,
       }),
-      fetchSupabaseSlice<SourceRunRow>("source_runs", {
-        limit: 5,
-        query: {
-          order: "run_started_at.desc",
-          select: "id,run_started_at,run_finished_at,status,meta,errors",
-        },
+    );
+
+    const previousRows = await loadQuery("Previous summary window query", () =>
+      fetchStrategyWindowRows(comparisonStart, {
+        end: currentStart,
+        select: SUMMARY_SELECT,
       }),
+    );
+
+    const [recentLiveRows, resultRows, sourceRunsPage] = await Promise.all([
+      loadQuery("Recent live bets query", () =>
+        fetchStrategyWindowSlice(currentStart, {
+          limit: RECENT_SLICE_LIMIT,
+          order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast",
+          query: {
+            or: "(live_bet_placed.eq.true,live_bet_attempted.eq.true)",
+          },
+          select: RECENT_BETS_SELECT,
+        }),
+      ),
+      loadQuery("Settled results query", () =>
+        fetchStrategyWindowRows(currentStart, {
+          query: {
+            live_bet_placed: "eq.true",
+            live_bet_settled: "eq.true",
+          },
+          select: RESULTS_SELECT,
+        }),
+      ),
+      loadQuery("Recent source runs query", () =>
+        fetchSupabaseSlice<SourceRunRow>("source_runs", {
+          limit: 5,
+          query: {
+            order: "run_started_at.desc",
+            select: "id,run_started_at,run_finished_at,status,meta,errors",
+          },
+          revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+        }),
+      ),
     ]);
 
-    const currentRows = rows.filter(
-      (row) => {
-        const timestamp = getWindowTimestamp(row);
-        return timestamp !== null && timestamp >= currentStart;
-      },
+    const placedCountsByRun = await loadQuery("Placed bet counts by run query", () =>
+      fetchPlacedCountsByRun(sourceRunsPage.data),
     );
-    const previousRows = rows.filter(
-      (row) => {
-        const timestamp = getWindowTimestamp(row);
-        return (
-          timestamp !== null &&
-          timestamp < currentStart &&
-          timestamp >= comparisonStart
-        );
-      },
-    );
-    const latestRows = currentRows.length > 0 ? currentRows : rows;
-    const updatedAt = latestRows.reduce<string | null>((latest, row) => {
-      const timestamp = getWindowTimestamp(row);
-      if (!timestamp) {
-        return latest;
-      }
-
-      if (!latest || timestamp > latest) {
-        return timestamp;
-      }
-
-      return latest;
-    }, null);
+    const updatedAt =
+      getLatestTimestamp(currentRows) ??
+      getLatestTimestamp(recentLiveRows) ??
+      getLatestTimestamp(resultRows) ??
+      getLatestTimestamp(previousRows);
 
     return {
       generatedAt: new Date().toISOString(),
-      latestRuns: buildLatestRuns(rows, sourceRunsPage.data),
+      latestRuns: buildLatestRuns(placedCountsByRun, sourceRunsPage.data),
       loadedCount: currentRows.length,
       metrics: buildMetrics(rangeDays, currentRows, previousRows),
       mode: "live",
-      notice: buildSamplingNotice(currentRows.length, rows.length),
-      recentResults: buildRecentResults(currentRows),
+      notice: buildSamplingNotice(currentRows.length, currentRows.length + previousRows.length),
+      recentResults: buildRecentResults(resultRows),
       resultsSummary: getResultsSummary(currentRows),
       rangeDays,
-      recentBets: buildRecentBets(currentRows),
-      totalCount: rows.length,
+      recentBets: buildRecentBets(recentLiveRows.sort(byNewestWindowTimestamp)),
+      totalCount: currentRows.length + previousRows.length,
       updatedAt,
     };
   } catch (error) {
