@@ -1,4 +1,8 @@
-import { fetchSupabaseSlice, hasSupabaseConfig } from "@/lib/supabase-rest";
+import {
+  fetchSupabaseSlice,
+  fetchSupabaseRows,
+  hasSupabaseConfig,
+} from "@/lib/supabase-rest";
 
 export const dashboardRanges = [7, 30, 90] as const;
 
@@ -7,6 +11,7 @@ export type DashboardRange = (typeof dashboardRanges)[number];
 export type DashboardMetric = {
   change: number | null;
   changeKind: "points" | "relative";
+  context?: string;
   helper: string;
   id:
     | "actual-live-pnl"
@@ -20,15 +25,10 @@ export type DashboardMetric = {
   value: number;
 };
 
-export type DashboardBreakdown = {
-  helper: string;
-  label: string;
-  tone: "negative" | "neutral" | "positive";
-  value: number;
-};
-
 export type DashboardRecentBet = {
   amount: number | null;
+  errorMessage: string | null;
+  eventEndAt: string | null;
   id: string;
   outcome: string;
   pnl: number | null;
@@ -39,16 +39,47 @@ export type DashboardRecentBet = {
   updatedAt: string | null;
 };
 
+export type DashboardResultBet = {
+  betAt: string | null;
+  eventEndAt: string | null;
+  id: string;
+  matchLabel: string;
+  pnl: number | null;
+  resolvedOutcome: string | null;
+  result: string;
+  selection: string;
+};
+
+export type DashboardJobRun = {
+  durationSeconds: number | null;
+  id: string;
+  placedCount: number;
+  startedAt: string;
+  status: string;
+};
+
+export type DashboardResultsSummary = {
+  benefit: number | null;
+  losses: number;
+  pending: number;
+  placedCount: number;
+  pushes: number;
+  settledCount: number;
+  winRate: number;
+  wins: number;
+};
+
 export type DashboardData = {
   generatedAt: string;
+  latestRuns: DashboardJobRun[];
   loadedCount: number;
   metrics: DashboardMetric[];
-  mode: "demo" | "live";
+  mode: "error" | "live";
   notice: string;
+  recentResults: DashboardResultBet[];
+  resultsSummary: DashboardResultsSummary;
   rangeDays: DashboardRange;
   recentBets: DashboardRecentBet[];
-  settlementBreakdown: DashboardBreakdown[];
-  strategyBreakdown: DashboardBreakdown[];
   totalCount: number | null;
   updatedAt: string | null;
 };
@@ -63,8 +94,8 @@ type StrategyBetPerformanceRow = {
   collected_at_event: string | null;
   collected_at_poly: string | null;
   competition: string | null;
-  executed_live: boolean | null;
   edge_vs_gmean: number | string | null;
+  event_end_time: string | null;
   fact_key: string;
   first_successful_attempted_at: string | null;
   is_bet_signal: boolean | null;
@@ -77,13 +108,14 @@ type StrategyBetPerformanceRow = {
   live_bet_result_status: string | null;
   live_bet_settled: boolean | null;
   live_bet_won_flag: number | boolean | null;
+  last_error_message: string | null;
   last_attempted_at: string | null;
   loss_flag: number | boolean | null;
   outcome_label: string | null;
   pending_flag: number | boolean | null;
   pm_team_1: string | null;
   pm_team_2: string | null;
-  refreshed_at: string | null;
+  resolved_outcome_label: string | null;
   settled_at: string | null;
   signal_count: number | string | null;
   sport: string | null;
@@ -96,9 +128,19 @@ type StrategyBetPerformanceRow = {
   win_flag: number | boolean | null;
 };
 
+type SourceRunRow = {
+  errors: unknown;
+  id: string;
+  meta: Record<string, unknown> | null;
+  run_finished_at: string | null;
+  run_started_at: string;
+  status: string | null;
+};
+
 type DashboardSummary = {
   actualLivePnlSum: number | null;
   livePlacedCount: number;
+  livePlacedStake: number;
   portfolioRoi: number | null;
   realizedPnlSum: number | null;
   settledDenominator: number;
@@ -167,15 +209,24 @@ function isSettled(row: StrategyBetPerformanceRow) {
 }
 
 function getWindowTimestamp(row: StrategyBetPerformanceRow) {
-  return row.collected_at_poly ?? row.collected_at_event ?? row.refreshed_at;
+  return row.collected_at_poly ?? row.collected_at_event;
 }
 
 function getLiveBetTimestamp(row: StrategyBetPerformanceRow) {
+  return getWindowTimestamp(row);
+}
+
+function getLiveBetStatus(row: StrategyBetPerformanceRow) {
   return (
-    row.settled_at ??
-    row.first_successful_attempted_at ??
-    row.last_attempted_at ??
-    row.refreshed_at
+    (
+      row.live_bet_settled
+        ? row.live_bet_result_status
+        : row.live_bet_placed
+          ? row.live_bet_placement_status ?? "placed"
+          : row.live_bet_attempted
+            ? row.live_bet_placement_status ?? "attempted"
+            : "unknown"
+    )?.toLowerCase().replaceAll("_", " ") ?? "unknown"
   );
 }
 
@@ -202,8 +253,54 @@ function getStakeValue(row: StrategyBetPerformanceRow) {
   );
 }
 
+function isDuplicateLiveSkip(row: StrategyBetPerformanceRow) {
+  return (row.last_error_message ?? "")
+    .toLowerCase()
+    .includes("skipped duplicate polymarket bet");
+}
+
+function getLiveBetErrorMessage(row: StrategyBetPerformanceRow) {
+  if (getLiveBetStatus(row) !== "attempt failed" || !row.last_error_message) {
+    return null;
+  }
+
+  const extractedMessage = row.last_error_message.match(/'error': '([^']+)'/i)?.[1];
+  const message = extractedMessage ?? row.last_error_message;
+
+  if (message.length <= 140) {
+    return message;
+  }
+
+  return `${message.slice(0, 137)}...`;
+}
+
+function getLiveResultState(row: StrategyBetPerformanceRow) {
+  const status = (row.live_bet_result_status ?? "").toLowerCase();
+
+  if (status === "won" || status === "lost" || status === "push") {
+    return status;
+  }
+
+  if (toNullableNumber(row.live_bet_won_flag as number | string | null) ?? 0) {
+    return "won";
+  }
+
+  if (toNullableNumber(row.live_bet_lost_flag as number | string | null) ?? 0) {
+    return "lost";
+  }
+
+  if (toNullableNumber(row.live_bet_push_flag as number | string | null) ?? 0) {
+    return "push";
+  }
+
+  return null;
+}
+
 function getSummary(rows: StrategyBetPerformanceRow[]): DashboardSummary {
   const signalRows = rows.filter(isSignal);
+  const visibleLiveRows = signalRows.filter(
+    (row) => row.live_bet_placed === true || !isDuplicateLiveSkip(row),
+  );
   const settledRows = signalRows.filter(isSettled);
   const wins = signalRows.reduce(
     (total, row) => total + (toBoolean(row.win_flag) ? toNullableNumber(row.signal_count) ?? 1 : 0),
@@ -216,12 +313,17 @@ function getSummary(rows: StrategyBetPerformanceRow[]): DashboardSummary {
   const pnlValues = signalRows
     .map(getPnlValue)
     .filter((value): value is number => value !== null);
-  const actualLivePnlValues = signalRows
+  const actualLivePnlValues = visibleLiveRows
     .filter((row) => row.live_bet_placed === true)
     .map(getActualLivePnlValue)
     .filter((value): value is number => value !== null);
   const totalStake = signalRows.reduce(
     (total, row) => total + (toNullableNumber(row.theoretical_stake_usdc) ?? 0),
+    0,
+  );
+  const livePlacedStake = visibleLiveRows.reduce(
+    (total, row) =>
+      total + (row.live_bet_placed === true ? getStakeValue(row) ?? 0 : 0),
     0,
   );
   const totalTheoreticalPnl = signalRows.reduce(
@@ -234,10 +336,11 @@ function getSummary(rows: StrategyBetPerformanceRow[]): DashboardSummary {
       actualLivePnlValues.length === 0
         ? null
         : actualLivePnlValues.reduce((total, value) => total + value, 0),
-    livePlacedCount: signalRows.reduce(
+    livePlacedCount: visibleLiveRows.reduce(
       (total, row) => total + (row.live_bet_placed === true ? toNullableNumber(row.signal_count) ?? 1 : 0),
       0,
     ),
+    livePlacedStake,
     portfolioRoi: totalStake === 0 ? null : (totalTheoreticalPnl / totalStake) * 100,
     realizedPnlSum:
       pnlValues.length === 0
@@ -254,24 +357,53 @@ function getSummary(rows: StrategyBetPerformanceRow[]): DashboardSummary {
   };
 }
 
-function getStrategyLimit(rangeDays: DashboardRange) {
-  if (rangeDays === 7) {
-    return 1800;
-  }
+function getResultsSummary(rows: StrategyBetPerformanceRow[]): DashboardResultsSummary {
+  const placedRows = rows.filter((row) => row.live_bet_placed === true);
+  const wins = placedRows.reduce(
+    (total, row) => total + (toNullableNumber(row.live_bet_won_flag as number | string | null) ?? 0),
+    0,
+  );
+  const losses = placedRows.reduce(
+    (total, row) => total + (toNullableNumber(row.live_bet_lost_flag as number | string | null) ?? 0),
+    0,
+  );
+  const pushes = placedRows.reduce(
+    (total, row) => total + (toNullableNumber(row.live_bet_push_flag as number | string | null) ?? 0),
+    0,
+  );
+  const pending = placedRows.reduce(
+    (total, row) => total + (toNullableNumber(row.live_bet_pending_flag as number | string | null) ?? 0),
+    0,
+  );
+  const settledCount = wins + losses + pushes;
+  const pnlValues = placedRows
+    .map(getActualLivePnlValue)
+    .filter((value): value is number => value !== null);
 
-  if (rangeDays === 30) {
-    return 4200;
-  }
-
-  return 7200;
+  return {
+    benefit:
+      pnlValues.length === 0
+        ? null
+        : pnlValues.reduce((total, value) => total + value, 0),
+    losses,
+    pending,
+    placedCount: placedRows.reduce(
+      (total, row) => total + (toNullableNumber(row.signal_count) ?? 1),
+      0,
+    ),
+    pushes,
+    settledCount,
+    winRate: settledCount === 0 ? 0 : (wins / settledCount) * 100,
+    wins,
+  };
 }
 
 function buildSamplingNotice(loadedCount: number, totalCount: number | null) {
   if (totalCount !== null && totalCount > loadedCount) {
-    return `Live performance is based on the most recent ${loadedCount.toLocaleString("en-US")} rows out of about ${totalCount.toLocaleString("en-US")} in strategy_bet_performance.`;
+    return `Analytics use ${loadedCount.toLocaleString("en-US")} signal rows in the selected window and ${totalCount.toLocaleString("en-US")} signal rows across the current plus previous comparison windows.`;
   }
 
-  return "Live performance is loaded directly from strategy_bet_performance through Supabase REST.";
+  return "Analytics are loaded directly from strategy_bet_performance through Supabase REST using collected_at_poly/collected_at_event.";
 }
 
 function buildMetrics(
@@ -310,7 +442,7 @@ function buildMetrics(
       changeKind: "relative",
       helper,
       id: "realized-pnl",
-      label: "Strategy PnL",
+      label: "Theoretical PnL",
       type: "currency",
       value: current.realizedPnlSum ?? 0,
     });
@@ -318,6 +450,7 @@ function buildMetrics(
     metrics.push({
       change: relativeDelta(current.livePlacedCount, previous.livePlacedCount),
       changeKind: "relative",
+      context: `$${current.livePlacedStake.toFixed(0)} placed`,
       helper,
       id: "live-executions",
       label: "Live bets placed",
@@ -351,229 +484,119 @@ function buildMetrics(
   return metrics;
 }
 
-function buildSettlementBreakdown(rows: StrategyBetPerformanceRow[]) {
-  const signalRows = rows.filter(isSignal);
-  const groups = new Map<string, number>();
+function getRunDurationSeconds(run: SourceRunRow) {
+  const metaDuration = run.meta?.duration_seconds;
 
-  for (const row of signalRows) {
-    const key = (row.settlement_status ?? "unknown").toLowerCase();
-    groups.set(key, (groups.get(key) ?? 0) + (toNullableNumber(row.signal_count) ?? 0));
+  if (typeof metaDuration === "number" && Number.isFinite(metaDuration)) {
+    return metaDuration;
   }
 
-  return Array.from(groups.entries())
-    .map(([label, value]) => ({
-      helper: `${((value / Math.max(signalRows.length, 1)) * 100).toFixed(1)}%`,
-      label: label.replaceAll("_", " "),
-      tone:
-        label === "won"
-          ? "positive"
-          : label === "lost"
-            ? "negative"
-            : "neutral",
-      value,
-    }))
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 6) as DashboardBreakdown[];
+  if (!run.run_finished_at) {
+    return null;
+  }
+
+  return (
+    new Date(run.run_finished_at).getTime() - new Date(run.run_started_at).getTime()
+  ) / 1000;
 }
 
-function buildStrategyBreakdown(rows: StrategyBetPerformanceRow[]) {
-  const signalRows = rows.filter(isSignal);
-  const groups = new Map<
-    string,
-    { count: number; losses: number; pnl: number; pnlCount: number; stake: number; wins: number }
-  >();
-
-  for (const row of signalRows) {
-    const key = row.strategy_name ?? "unknown";
-    const current = groups.get(key) ?? {
-      count: 0,
-      losses: 0,
-      pnl: 0,
-      pnlCount: 0,
-      stake: 0,
-      wins: 0,
-    };
-    const signalCount = toNullableNumber(row.signal_count) ?? 0;
-    const pnl = toNullableNumber(row.theoretical_pnl_usdc);
-
-    current.count += signalCount;
-    current.wins += toBoolean(row.win_flag) ? signalCount : 0;
-    current.losses += toBoolean(row.loss_flag) ? signalCount : 0;
-    current.stake += toNullableNumber(row.theoretical_stake_usdc) ?? 0;
-    if (pnl !== null) {
-      current.pnl += pnl;
-      current.pnlCount += 1;
-    }
-    groups.set(key, current);
-  }
-
-  return Array.from(groups.entries())
-    .map(([label, value]) => {
-      const denominator = value.wins + value.losses;
-      const roi = value.stake === 0 ? null : (value.pnl / value.stake) * 100;
-      const helper =
-        roi !== null && value.pnlCount > 0
-          ? `${roi.toFixed(1)}% roi`
-          : denominator === 0
-            ? `${value.count} signals`
-            : `${((value.wins / denominator) * 100).toFixed(1)}% win`;
-
-      return {
-        helper,
-        label,
-        tone:
-          roi !== null
-            ? roi > 0
-              ? "positive"
-              : roi < 0
-                ? "negative"
-                : "neutral"
-            : value.wins > value.losses
-              ? "positive"
-              : "neutral",
-        value: value.count,
-      };
-    })
-    .sort((left, right) => right.value - left.value)
-    .slice(0, 6) as DashboardBreakdown[];
+function buildLatestRuns(
+  rows: StrategyBetPerformanceRow[],
+  sourceRuns: SourceRunRow[],
+): DashboardJobRun[] {
+  return sourceRuns.map((run) => ({
+    durationSeconds: getRunDurationSeconds(run),
+    id: run.id,
+    placedCount: rows.reduce(
+      (total, row) =>
+        total +
+        (row.live_bet_placed === true && row.collected_at_event === run.run_started_at
+          ? toNullableNumber(row.signal_count) ?? 1
+          : 0),
+      0,
+    ),
+    startedAt: run.run_started_at,
+    status: (run.status ?? "unknown").toLowerCase(),
+  }));
 }
 
 function buildRecentBets(rows: StrategyBetPerformanceRow[]) {
   return rows
-    .filter((row) => row.live_bet_attempted === true || row.live_bet_placed === true)
+    .filter(
+      (row) =>
+        row.live_bet_placed === true ||
+        (row.live_bet_attempted === true && !isDuplicateLiveSkip(row)),
+    )
     .sort((left, right) => {
       return (
         new Date(getLiveBetTimestamp(right) ?? 0).getTime() -
         new Date(getLiveBetTimestamp(left) ?? 0).getTime()
       );
     })
-    .slice(0, 8)
+    .slice(0, 5)
+    .map((row) => {
+      const status = getLiveBetStatus(row);
+
+      return {
+        amount: getStakeValue(row),
+        errorMessage: getLiveBetErrorMessage(row),
+        eventEndAt: row.event_end_time,
+        id: row.fact_key,
+        outcome: row.outcome_label ?? "Unknown outcome",
+        pnl: getActualLivePnlValue(row),
+        status,
+        strategy: row.strategy_name ?? "unknown",
+        teamOne: row.pm_team_1 ?? "Unknown",
+        teamTwo: row.pm_team_2 ?? "Unknown",
+        updatedAt: getLiveBetTimestamp(row),
+      };
+    });
+}
+
+function buildRecentResults(rows: StrategyBetPerformanceRow[]) {
+  return rows
+    .filter((row) => row.live_bet_placed === true && getLiveResultState(row) !== null)
+    .sort((left, right) => {
+      return (
+        new Date(right.settled_at ?? right.event_end_time ?? 0).getTime() -
+        new Date(left.settled_at ?? left.event_end_time ?? 0).getTime()
+      );
+    })
     .map((row) => ({
-      amount: getStakeValue(row),
+      betAt: row.first_successful_attempted_at ?? row.collected_at_poly ?? row.collected_at_event,
+      eventEndAt: row.event_end_time ?? row.settled_at,
       id: row.fact_key,
-      outcome: row.outcome_label ?? "Unknown outcome",
+      matchLabel: `${row.pm_team_1 ?? "Unknown"} vs ${row.pm_team_2 ?? "Unknown"}`,
       pnl: getActualLivePnlValue(row),
-      status:
-        (
-        row.live_bet_settled
-          ? row.live_bet_result_status
-          : row.live_bet_placed
-            ? row.live_bet_placement_status ?? "placed"
-            : row.live_bet_attempted
-              ? row.live_bet_placement_status ?? "attempted"
-              : "unknown"
-        )?.toLowerCase().replaceAll("_", " ") ?? "unknown",
-      strategy: row.strategy_name ?? "unknown",
-      teamOne: row.pm_team_1 ?? "Unknown",
-      teamTwo: row.pm_team_2 ?? "Unknown",
-      updatedAt: getLiveBetTimestamp(row),
+      resolvedOutcome: row.resolved_outcome_label,
+      result: getLiveResultState(row) ?? "unknown",
+      selection: row.outcome_label ?? "Unknown outcome",
     }));
 }
 
-function buildDemoData(rangeDays: DashboardRange, notice: string): DashboardData {
+function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardData {
   return {
     generatedAt: new Date().toISOString(),
-    loadedCount: 3200,
-    metrics: [
-      {
-        change: 9.4,
-        changeKind: "relative",
-        helper: `vs previous ${rangeDays} days`,
-        id: "signal-count",
-        label: "Signals",
-        type: "compact",
-        value: 126,
-      },
-      {
-        change: 4.6,
-        changeKind: "points",
-        helper: `vs previous ${rangeDays} days`,
-        id: "settled-win-rate",
-        label: "Settled win rate",
-        type: "points",
-        value: 58.4,
-      },
-      {
-        change: 3.1,
-        changeKind: "points",
-        helper: `vs previous ${rangeDays} days`,
-        id: "portfolio-roi",
-        label: "Portfolio ROI",
-        type: "points",
-        value: 12.4,
-      },
-      {
-        change: 7.8,
-        changeKind: "relative",
-        helper: `vs previous ${rangeDays} days`,
-        id: "realized-pnl",
-        label: "Strategy PnL",
-        type: "currency",
-        value: 214,
-      },
-    ],
-    mode: "demo",
+    latestRuns: [],
+    loadedCount: 0,
+    metrics: [],
+    mode: "error",
     notice,
+    recentResults: [],
+    resultsSummary: {
+      benefit: null,
+      losses: 0,
+      pending: 0,
+      placedCount: 0,
+      pushes: 0,
+      settledCount: 0,
+      winRate: 0,
+      wins: 0,
+    },
     rangeDays,
-    recentBets: [
-      {
-        amount: 12,
-        id: "demo-1",
-        outcome: "FC Barcelona",
-        pnl: 5.4,
-        status: "won",
-        strategy: "bet_12",
-        teamOne: "Atletico",
-        teamTwo: "Barcelona",
-        updatedAt: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
-      },
-      {
-        amount: 8,
-        id: "demo-2",
-        outcome: "Mavericks",
-        pnl: 3.2,
-        status: "won",
-        strategy: "bet_06",
-        teamOne: "Warriors",
-        teamTwo: "Mavericks",
-        updatedAt: new Date(Date.now() - 1000 * 60 * 28).toISOString(),
-      },
-      {
-        amount: 10,
-        id: "demo-3",
-        outcome: "Pelicans",
-        pnl: -10,
-        status: "lost",
-        strategy: "bet_06",
-        teamOne: "Pelicans",
-        teamTwo: "Knicks",
-        updatedAt: new Date(Date.now() - 1000 * 60 * 41).toISOString(),
-      },
-      {
-        amount: 6,
-        id: "demo-4",
-        outcome: "Heat",
-        pnl: null,
-        status: "pending",
-        strategy: "bet_19",
-        teamOne: "Heat",
-        teamTwo: "Cavaliers",
-        updatedAt: new Date(Date.now() - 1000 * 60 * 54).toISOString(),
-      },
-    ],
-    settlementBreakdown: [
-      { helper: "58.4%", label: "won", tone: "positive", value: 45 },
-      { helper: "31.2%", label: "lost", tone: "negative", value: 24 },
-      { helper: "10.4%", label: "pending", tone: "neutral", value: 8 },
-    ],
-    strategyBreakdown: [
-      { helper: "61.0% win", label: "bet_06", tone: "positive", value: 44 },
-      { helper: "57.1% win", label: "bet_12", tone: "positive", value: 28 },
-      { helper: "50.0% win", label: "bet_15", tone: "neutral", value: 20 },
-      { helper: "40.0% win", label: "bet_19", tone: "neutral", value: 15 },
-    ],
-    totalCount: 18192,
-    updatedAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
+    recentBets: [],
+    totalCount: null,
+    updatedAt: null,
   };
 }
 
@@ -583,33 +606,34 @@ export function getRangeFromSearch(value: string | string[] | undefined) {
 
 export async function getDashboardData(rangeDays: DashboardRange): Promise<DashboardData> {
   if (!hasSupabaseConfig()) {
-    return buildDemoData(
+    return buildErrorData(
       rangeDays,
-      "No Supabase REST credentials were found. The UI is running on a demo snapshot until the API values are configured.",
+      "Database connection is not configured. Missing SUPABASE_REST_URL or SUPABASE_API_KEY.",
     );
   }
 
   const now = new Date();
   const comparisonStart = subtractDays(now, rangeDays * 2).toISOString();
   const currentStart = subtractDays(now, rangeDays).toISOString();
-  const limit = getStrategyLimit(rangeDays);
 
   try {
-    const page = await fetchSupabaseSlice<StrategyBetPerformanceRow>(
-      "strategy_bet_performance",
-      {
-        countMode: "planned",
-        limit,
+    const [rows, sourceRunsPage] = await Promise.all([
+      fetchSupabaseRows<StrategyBetPerformanceRow>("strategy_bet_performance", {
+        is_bet_signal: "eq.true",
+        order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast",
+        or: `(collected_at_poly.gte.${comparisonStart},collected_at_event.gte.${comparisonStart})`,
+        select:
+          "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,last_attempted_at,first_successful_attempted_at,strategy_name,strategy_threshold,sport,competition,is_bet_signal,signal_count,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,last_error_message,settlement_status,outcome_label,resolved_outcome_label,pm_team_1,pm_team_2,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,actual_realized_roi,actual_realized_roi_estimated,theoretical_stake_usdc,theoretical_pnl_usdc,theoretical_roi,edge_vs_gmean,win_flag,loss_flag,pending_flag",
+      }),
+      fetchSupabaseSlice<SourceRunRow>("source_runs", {
+        limit: 5,
         query: {
-          order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast,refreshed_at.desc",
-          or: `(collected_at_poly.gte.${comparisonStart},collected_at_event.gte.${comparisonStart},refreshed_at.gte.${comparisonStart})`,
-          select:
-            "fact_key,refreshed_at,collected_at_poly,collected_at_event,settled_at,last_attempted_at,first_successful_attempted_at,strategy_name,strategy_threshold,sport,competition,is_bet_signal,signal_count,executed_live,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,outcome_label,pm_team_1,pm_team_2,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,actual_realized_roi,actual_realized_roi_estimated,theoretical_stake_usdc,theoretical_pnl_usdc,theoretical_roi,edge_vs_gmean,win_flag,loss_flag,pending_flag",
+          order: "run_started_at.desc",
+          select: "id,run_started_at,run_finished_at,status,meta,errors",
         },
-      },
-    );
+      }),
+    ]);
 
-    const rows = page.data;
     const currentRows = rows.filter(
       (row) => {
         const timestamp = getWindowTimestamp(row);
@@ -626,8 +650,9 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
         );
       },
     );
-    const updatedAt = rows.reduce<string | null>((latest, row) => {
-      const timestamp = row.refreshed_at ?? getWindowTimestamp(row);
+    const latestRows = currentRows.length > 0 ? currentRows : rows;
+    const updatedAt = latestRows.reduce<string | null>((latest, row) => {
+      const timestamp = getWindowTimestamp(row);
       if (!timestamp) {
         return latest;
       }
@@ -641,23 +666,26 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
 
     return {
       generatedAt: new Date().toISOString(),
-      loadedCount: rows.length,
+      latestRuns: buildLatestRuns(rows, sourceRunsPage.data),
+      loadedCount: currentRows.length,
       metrics: buildMetrics(rangeDays, currentRows, previousRows),
       mode: "live",
-      notice: `${buildSamplingNotice(rows.length, page.count)} Snapshot windows use collected_at_poly/collected_at_event, and rows older than 7 days may not be re-evaluated by the sync job.`,
+      notice: buildSamplingNotice(currentRows.length, rows.length),
+      recentResults: buildRecentResults(currentRows),
+      resultsSummary: getResultsSummary(currentRows),
       rangeDays,
       recentBets: buildRecentBets(currentRows),
-      settlementBreakdown: buildSettlementBreakdown(currentRows),
-      strategyBreakdown: buildStrategyBreakdown(currentRows),
-      totalCount: page.count,
+      totalCount: rows.length,
       updatedAt,
     };
   } catch (error) {
     console.error("Failed to load dashboard data from strategy_bet_performance", error);
 
-    return buildDemoData(
+    return buildErrorData(
       rangeDays,
-      "The live performance query failed, so the dashboard fell back to demo data. Check table permissions and the API key if this persists.",
+      error instanceof Error
+        ? `Database connection failed: ${error.message}`
+        : `Database connection failed: ${String(error)}`,
     );
   }
 }

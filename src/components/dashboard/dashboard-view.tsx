@@ -4,22 +4,26 @@ import {
   ArrowUpRight,
   Bot,
   CircleDollarSign,
-  Database,
+  Clock3,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 
 import type {
-  DashboardBreakdown,
   DashboardData,
+  DashboardJobRun,
   DashboardMetric,
   DashboardRange,
+  DashboardResultBet,
+  DashboardResultsSummary,
 } from "@/lib/dashboard";
 import { dashboardRanges } from "@/lib/dashboard";
 import {
   cn,
   formatCompactNumber,
   formatCurrency,
+  formatDateTime,
+  formatDurationSeconds,
   formatPercent,
   formatRelativeTime,
   formatSignedPercent,
@@ -40,29 +44,45 @@ const metricIcons = {
 } as const;
 
 export function DashboardView({ data }: DashboardViewProps) {
+  if (data.mode === "error") {
+    return (
+      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
+        <section className="surface rounded-[28px] p-6 sm:p-7">
+          <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">
+              Connection error
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+              Dashboard unavailable
+            </h1>
+            <p className="mt-3 text-sm leading-6 text-slate-700">{data.notice}</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
       <section className="surface rounded-[28px] px-5 py-4 sm:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <CompactBadge tone={data.mode === "live" ? "success" : "warning"}>
-                {data.mode === "live" ? "Live" : "Demo"}
+              <CompactBadge tone="success">Live</CompactBadge>
+              <CompactBadge tone="neutral">
+                Latest snapshot {formatRelativeTime(data.updatedAt)}
               </CompactBadge>
               <CompactBadge tone="neutral">
-                Refresh {formatRelativeTime(data.updatedAt)}
-              </CompactBadge>
-              <CompactBadge tone="neutral">
-                {formatCompactNumber(data.loadedCount)} rows loaded
+                {formatCompactNumber(data.loadedCount)} signal rows analyzed
               </CompactBadge>
             </div>
             <div>
               <h1 className="text-2xl font-semibold tracking-[-0.05em] text-slate-950 sm:text-3xl">
-                Strategy performance
+                Polygon
               </h1>
               <p className="mt-1 text-sm text-slate-600">
-                Theoretical strategy analytics plus live bet tracking directly from
-                `strategy_bet_performance`.
+                Theoretical strategy analytics and live bet tracking based on
+                collected market snapshots from `strategy_bet_performance`.
               </p>
             </div>
           </div>
@@ -83,7 +103,7 @@ export function DashboardView({ data }: DashboardViewProps) {
               Recent live bets
             </p>
             <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-              Latest live placement and result rows
+              Latest live bet rows by collected snapshot time
             </h2>
           </div>
           <div className="grid gap-2">
@@ -115,65 +135,30 @@ export function DashboardView({ data }: DashboardViewProps) {
                     </span>
                     <span>{formatRelativeTime(bet.updatedAt)}</span>
                   </div>
+                  {bet.eventEndAt ? (
+                    <p className="mt-1 text-xs text-slate-500">
+                      Ends {formatDateTime(bet.eventEndAt)}
+                    </p>
+                  ) : null}
+                  {bet.errorMessage ? (
+                    <div className="mt-2 flex items-start gap-2 rounded-2xl border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-xs text-rose-800">
+                      <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <p>{bet.errorMessage}</p>
+                    </div>
+                  ) : null}
                 </div>
               ))
             )}
           </div>
         </section>
 
-        <section className="grid gap-4">
-          <BreakdownCard
-            icon={<ShieldCheck className="h-4 w-4" />}
-            items={data.settlementBreakdown}
-            subtitle="Theoretical strategy settlement mix for signal rows."
-            title="Signal settlement mix"
-          />
-          <BreakdownCard
-            icon={<Activity className="h-4 w-4" />}
-            items={data.strategyBreakdown}
-            subtitle="Signal volume per strategy with theoretical ROI context where available."
-            title="Strategy mix"
-          />
+        <section className="grid gap-3">
+          <ResultsCard rangeDays={data.rangeDays} summary={data.resultsSummary} />
+          <JobsCard runs={data.latestRuns} />
         </section>
       </section>
 
-      <section className="surface rounded-[28px] px-4 py-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="grid gap-2 sm:grid-cols-3">
-            <MiniStat
-              label="Source rows"
-              value={
-                data.totalCount === null
-                  ? formatCompactNumber(data.loadedCount)
-                  : formatCompactNumber(data.totalCount)
-              }
-            />
-            <MiniStat
-              label="Loaded slice"
-              value={formatCompactNumber(data.loadedCount)}
-            />
-            <MiniStat
-              label="Last refresh"
-              value={formatRelativeTime(data.updatedAt)}
-            />
-          </div>
-          <div
-            className={cn(
-              "flex items-start gap-2 rounded-2xl border px-3 py-2 text-xs leading-5 lg:max-w-md",
-              data.mode === "live"
-                ? "border-emerald-200 bg-emerald-50/80 text-emerald-900"
-                : "border-amber-200 bg-amber-50/90 text-amber-950",
-            )}
-          >
-            {data.mode === "live" ? (
-              <Database className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            ) : (
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            )}
-            <p>{data.notice}</p>
-          </div>
-        </div>
-      </section>
+      <ResultsTable rangeDays={data.rangeDays} results={data.recentResults} />
     </main>
   );
 }
@@ -212,6 +197,11 @@ function MetricCard({ metric }: { metric: DashboardMetric }) {
           <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950">
             {formatMetricValue(metric)}
           </p>
+          {metric.context ? (
+            <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
+              {metric.context}
+            </p>
+          ) : null}
         </div>
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 text-slate-700">
           <Icon className="h-4 w-4" />
@@ -238,67 +228,202 @@ function MetricCard({ metric }: { metric: DashboardMetric }) {
   );
 }
 
-function BreakdownCard({
-  icon,
-  items,
-  subtitle,
-  title,
+function ResultsCard({
+  rangeDays,
+  summary,
 }: {
-  icon: React.ReactNode;
-  items: DashboardBreakdown[];
-  subtitle: string;
-  title: string;
+  rangeDays: DashboardRange;
+  summary: DashboardResultsSummary;
 }) {
+  const benefitTone =
+    summary.benefit === null
+      ? "text-slate-900"
+      : summary.benefit > 0
+        ? "text-emerald-700"
+        : summary.benefit < 0
+          ? "text-rose-700"
+          : "text-slate-900";
+
   return (
-    <section className="surface rounded-[28px] p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
+    <section className="surface rounded-[28px] p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Breakdown
+            Results
           </p>
-          <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-            {title}
+          <h2 className="mt-1 text-base font-semibold tracking-[-0.03em] text-slate-950">
+            Range win rate
           </h2>
-          <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            Live placed bets in the selected {rangeDays} day window.
+          </p>
         </div>
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 text-slate-700">
-          {icon}
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2 text-slate-700">
+          <ShieldCheck className="h-4 w-4" />
         </div>
       </div>
-      <div className="grid gap-2">
-        {items.length === 0 ? (
+      <div className="rounded-3xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+        <div className="flex items-end justify-between gap-3">
+          <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+            {formatPercent(summary.winRate)}
+          </p>
+          <p className="text-xs text-slate-500">
+            {formatCompactNumber(summary.wins)} won, {formatCompactNumber(summary.losses)} lost
+            {summary.pushes > 0 ? `, ${formatCompactNumber(summary.pushes)} push` : ""}
+          </p>
+        </div>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <MiniStat
+          label="Placed bets"
+          value={formatCompactNumber(summary.placedCount)}
+        />
+        <MiniStat
+          label="Settled bets"
+          value={formatCompactNumber(summary.settledCount)}
+        />
+        <MiniStat
+          label="Pending bets"
+          value={formatCompactNumber(summary.pending)}
+        />
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2">
+          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Benefit</p>
+          <p className={cn("mt-1 text-sm font-semibold", benefitTone)}>
+            {summary.benefit === null ? "No PnL yet" : formatCurrency(summary.benefit, 2)}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
+  return (
+    <section className="surface rounded-[28px] p-4">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Jobs
+          </p>
+          <h2 className="mt-1 text-base font-semibold tracking-[-0.03em] text-slate-950">
+            Last 5 runs
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-slate-600">
+            Latest `source_runs` with placed bets matched by run snapshot time.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2 text-slate-700">
+          <Clock3 className="h-4 w-4" />
+        </div>
+      </div>
+      <div className="grid gap-1.5">
+        {runs.length === 0 ? (
           <EmptyState
-            message="No rows were available for this breakdown in the selected window."
-            title="No data"
+            message="No recent source runs were returned."
+            title="No jobs"
           />
         ) : (
-          items.map((item) => (
+          runs.map((run) => (
             <div
-              key={item.label}
-              className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5"
+              key={run.id}
+              className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2"
             >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-950">
-                  {item.label}
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-w-0 truncate text-sm font-semibold text-slate-950">
+                  {formatDateTime(run.startedAt)}
                 </p>
-                <p className="text-xs text-slate-500">{item.helper}</p>
+                <StatusBadge status={run.status} />
               </div>
-              <span
-                className={cn(
-                  "text-sm font-semibold",
-                  item.tone === "positive"
-                    ? "text-emerald-700"
-                    : item.tone === "negative"
-                      ? "text-rose-700"
-                      : "text-slate-900",
-                )}
-              >
-                {formatCompactNumber(item.value)}
-              </span>
+              <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
+                <span>{formatDurationSeconds(run.durationSeconds)}</span>
+                <span>{formatCompactNumber(run.placedCount)} placed</span>
+              </div>
             </div>
           ))
         )}
       </div>
+    </section>
+  );
+}
+
+function ResultsTable({
+  rangeDays,
+  results,
+}: {
+  rangeDays: DashboardRange;
+  results: DashboardResultBet[];
+}) {
+  return (
+    <section className="surface rounded-[28px] p-5">
+      <div className="mb-4">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          Result bets
+        </p>
+        <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
+          Results in the selected {rangeDays} day window.
+        </h2>
+      </div>
+      {results.length === 0 ? (
+        <EmptyState
+          message="No settled live bets were returned for the selected period yet."
+          title="No settled results"
+        />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                <th className="px-3 py-1 font-medium">Match</th>
+                <th className="px-3 py-1 font-medium">Bet</th>
+                <th className="px-3 py-1 font-medium">Bet at</th>
+                <th className="px-3 py-1 font-medium">Finished</th>
+                <th className="px-3 py-1 font-medium">Result</th>
+                <th className="px-3 py-1 font-medium">Win/Loss</th>
+                <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((result) => (
+                <tr
+                  key={result.id}
+                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 text-sm text-slate-700"
+                >
+                  <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
+                    {result.matchLabel}
+                  </td>
+                  <td className="px-3 py-3">{result.selection}</td>
+                  <td className="px-3 py-3 text-slate-500">
+                    {formatDateTime(result.betAt)}
+                  </td>
+                  <td className="px-3 py-3 text-slate-500">
+                    {formatDateTime(result.eventEndAt)}
+                  </td>
+                  <td className="px-3 py-3">
+                    {result.resolvedOutcome ?? "No result yet"}
+                  </td>
+                  <td className="px-3 py-3">
+                    <StatusBadge status={result.result} />
+                  </td>
+                  <td
+                    className={cn(
+                      "rounded-r-2xl px-3 py-3 text-right font-semibold",
+                      result.pnl === null
+                        ? "text-slate-900"
+                        : result.pnl > 0
+                          ? "text-emerald-700"
+                          : result.pnl < 0
+                            ? "text-rose-700"
+                            : "text-slate-900",
+                    )}
+                  >
+                    {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -321,6 +446,15 @@ function formatValue(value: number | null) {
   }
 
   return formatCurrency(value);
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2">
+      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="mt-0.5 text-sm font-semibold text-slate-950">{value}</p>
+    </div>
+  );
 }
 
 function CompactBadge({
@@ -349,15 +483,6 @@ function CompactBadge({
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm font-semibold text-slate-950">{value}</p>
-    </div>
-  );
-}
-
 function EmptyState({
   message,
   title,
@@ -379,9 +504,12 @@ function EmptyState({
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const styles =
-    normalized === "won"
+    normalized === "placed" || normalized === "won" || normalized === "success"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : normalized === "lost"
+      : normalized === "attempt failed" ||
+          normalized === "lost" ||
+          normalized === "failed" ||
+          normalized === "error"
         ? "border-rose-200 bg-rose-50 text-rose-700"
         : normalized === "pending"
           ? "border-amber-200 bg-amber-50 text-amber-700"

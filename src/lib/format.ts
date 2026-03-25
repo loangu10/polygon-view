@@ -53,6 +53,22 @@ export function formatDateTime(value: Date | string | null | undefined) {
   }).format(date);
 }
 
+export function formatDurationSeconds(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "No data";
+  }
+
+  const rounded = Math.max(0, Math.round(value));
+  const minutes = Math.floor(rounded / 60);
+  const seconds = rounded % 60;
+
+  if (minutes === 0) {
+    return `${seconds}s`;
+  }
+
+  return `${minutes}m ${seconds}s`;
+}
+
 export function formatRelativeTime(value: Date | string | null | undefined) {
   if (!value) {
     return "No data";

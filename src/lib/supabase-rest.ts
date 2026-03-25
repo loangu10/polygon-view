@@ -116,11 +116,14 @@ export async function fetchSupabaseRows<T>(
   } = {},
 ) {
   const pageSize = options.pageSize ?? 1000;
-  const maxRows = options.maxRows ?? 5000;
+  const maxRows = options.maxRows;
   const rows: T[] = [];
 
-  for (let from = 0; from < maxRows; from += pageSize) {
-    const to = Math.min(from + pageSize - 1, maxRows - 1);
+  for (let from = 0; ; from += pageSize) {
+    const to =
+      maxRows === undefined
+        ? from + pageSize - 1
+        : Math.min(from + pageSize - 1, maxRows - 1);
     const page = await fetchSupabasePage<T>(table, {
       countMode: from === 0 ? "planned" : false,
       from,
@@ -137,9 +140,13 @@ export async function fetchSupabaseRows<T>(
     if (page.count !== null && rows.length >= page.count) {
       break;
     }
+
+    if (maxRows !== undefined && rows.length >= maxRows) {
+      break;
+    }
   }
 
-  return rows;
+  return maxRows === undefined ? rows : rows.slice(0, maxRows);
 }
 
 export async function fetchTableSummary(table: string, timeColumn = "collected_at") {
