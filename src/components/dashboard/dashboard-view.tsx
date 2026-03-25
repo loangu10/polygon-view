@@ -46,7 +46,7 @@ const metricIcons = {
 export function DashboardView({ data }: DashboardViewProps) {
   if (data.mode === "error") {
     return (
-      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-3 py-5 sm:px-6 sm:py-6 lg:px-8">
         <section className="surface rounded-[28px] p-6 sm:p-7">
           <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">
@@ -63,7 +63,7 @@ export function DashboardView({ data }: DashboardViewProps) {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-3 py-3 sm:px-6 sm:py-6 lg:px-8">
       <section className="surface rounded-[28px] px-5 py-4 sm:px-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
@@ -129,7 +129,7 @@ export function DashboardView({ data }: DashboardViewProps) {
                     </div>
                     <StatusBadge status={bet.status} />
                   </div>
-                  <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
+                  <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <span className="font-medium text-slate-900">
                       {formatValue(bet.pnl ?? bet.amount)}
                     </span>
@@ -263,7 +263,7 @@ function ResultsCard({
         </div>
       </div>
       <div className="rounded-3xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
-        <div className="flex items-end justify-between gap-3">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
           <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
             {formatPercent(summary.winRate)}
           </p>
@@ -369,8 +369,50 @@ function ResultsTable({
           title="No settled results"
         />
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-y-2">
+        <>
+          <div className="grid gap-2 md:hidden">
+            {results.map((result) => (
+              <div
+                key={result.id}
+                className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-950">
+                      {result.matchLabel}
+                    </p>
+                    <p className="text-sm text-slate-600">{result.selection}</p>
+                  </div>
+                  <StatusBadge status={result.result} />
+                </div>
+                <div className="mt-2 grid gap-1 text-xs text-slate-500">
+                  <p>Bet at {formatDateTime(result.betAt)}</p>
+                  <p>Finished {formatDateTime(result.eventEndAt)}</p>
+                  <p>Best result {result.resolvedOutcome ?? "No result yet"}</p>
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                  <span className="text-slate-500">P&amp;L</span>
+                  <span
+                    className={cn(
+                      "font-semibold",
+                      result.pnl === null
+                        ? "text-slate-900"
+                        : result.pnl > 0
+                          ? "text-emerald-700"
+                          : result.pnl < 0
+                            ? "text-rose-700"
+                            : "text-slate-900",
+                    )}
+                  >
+                    {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-full border-separate border-spacing-y-2">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
                 <th className="px-3 py-1 font-medium">Match</th>
@@ -382,47 +424,48 @@ function ResultsTable({
                 <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
               </tr>
             </thead>
-            <tbody>
-              {results.map((result) => (
-                <tr
-                  key={result.id}
-                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 text-sm text-slate-700"
-                >
-                  <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
-                    {result.matchLabel}
-                  </td>
-                  <td className="px-3 py-3">{result.selection}</td>
-                  <td className="px-3 py-3 text-slate-500">
-                    {formatDateTime(result.betAt)}
-                  </td>
-                  <td className="px-3 py-3 text-slate-500">
-                    {formatDateTime(result.eventEndAt)}
-                  </td>
-                  <td className="px-3 py-3">
-                    {result.resolvedOutcome ?? "No result yet"}
-                  </td>
-                  <td className="px-3 py-3">
-                    <StatusBadge status={result.result} />
-                  </td>
-                  <td
-                    className={cn(
-                      "rounded-r-2xl px-3 py-3 text-right font-semibold",
-                      result.pnl === null
-                        ? "text-slate-900"
-                        : result.pnl > 0
-                          ? "text-emerald-700"
-                          : result.pnl < 0
-                            ? "text-rose-700"
-                            : "text-slate-900",
-                    )}
+              <tbody>
+                {results.map((result) => (
+                  <tr
+                    key={result.id}
+                    className="rounded-2xl border border-slate-200/80 bg-slate-50/70 text-sm text-slate-700"
                   >
-                    {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
+                      {result.matchLabel}
+                    </td>
+                    <td className="px-3 py-3">{result.selection}</td>
+                    <td className="px-3 py-3 text-slate-500">
+                      {formatDateTime(result.betAt)}
+                    </td>
+                    <td className="px-3 py-3 text-slate-500">
+                      {formatDateTime(result.eventEndAt)}
+                    </td>
+                    <td className="px-3 py-3">
+                      {result.resolvedOutcome ?? "No result yet"}
+                    </td>
+                    <td className="px-3 py-3">
+                      <StatusBadge status={result.result} />
+                    </td>
+                    <td
+                      className={cn(
+                        "rounded-r-2xl px-3 py-3 text-right font-semibold",
+                        result.pnl === null
+                          ? "text-slate-900"
+                          : result.pnl > 0
+                            ? "text-emerald-700"
+                            : result.pnl < 0
+                              ? "text-rose-700"
+                              : "text-slate-900",
+                      )}
+                    >
+                      {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </section>
   );
