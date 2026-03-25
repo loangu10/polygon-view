@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Polygon View
 
-## Getting Started
+Minimal Next.js dashboard for monitoring strategy performance from Supabase via the REST API.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 App Router
+- React 19
+- Tailwind CSS 4
+- Server-side Supabase REST GET requests
+- Vercel-ready deployment shape
+
+## Local setup
+
+1. Copy `.env.example` to `.env.local`.
+2. Fill in the Supabase REST URL and API key.
+3. Start the app:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+If no database credentials are present, the dashboard falls back to demo data so the UI still renders.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+SUPABASE_REST_URL=https://your-project.supabase.co/rest/v1/
+SUPABASE_API_KEY=your-publishable-or-service-role-key
+```
 
-## Learn More
+Only the server accesses Supabase. The current app does not expose the API key to the browser bundle.
 
-To learn more about Next.js, take a look at the following resources:
+## Deploying to Vercel
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Add the same environment variables in your Vercel project settings, then deploy normally.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+This app is built as a server-rendered dashboard and aggregates the REST responses in Next.js before rendering.
 
-## Deploy on Vercel
+## Notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- The dashboard is now driven primarily by `strategy_bet_performance`.
+- Current live metrics focus on signals, pending bets, settled win rate, execution count, and recent outcomes.
+- Supabase REST is used for GET requests only; the dashboard computes summaries in the app layer.
