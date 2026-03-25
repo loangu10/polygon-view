@@ -90,14 +90,14 @@ export function DashboardView({ data }: DashboardViewProps) {
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {data.metrics.map((metric) => (
           <MetricCard key={metric.id} metric={metric} />
         ))}
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_340px]">
-        <section className="surface rounded-[28px] p-5">
+        <section className="surface rounded-[28px] p-4 sm:p-5">
           <div className="mb-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
               Recent live bets
@@ -116,18 +116,20 @@ export function DashboardView({ data }: DashboardViewProps) {
               data.recentBets.map((bet) => (
                 <div
                   key={bet.id}
-                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
+                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-950">
+                      <p className="text-sm font-semibold leading-5 text-slate-950 sm:truncate">
                         {bet.teamOne} vs {bet.teamTwo}
                       </p>
-                      <p className="truncate text-sm text-slate-600">
+                      <p className="text-sm text-slate-600 sm:truncate">
                         {bet.strategy} / {bet.outcome}
                       </p>
                     </div>
-                    <StatusBadge status={bet.status} />
+                    <div className="self-start sm:self-auto">
+                      <StatusBadge status={bet.status} />
+                    </div>
                   </div>
                   <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                     <span className="font-medium text-slate-900">
