@@ -17,12 +17,12 @@ import type {
   DashboardResultBet,
   DashboardResultsSummary,
 } from "@/lib/dashboard";
+import { LocalDateTime } from "@/components/time/local-date-time";
 import { dashboardRanges } from "@/lib/dashboard";
 import {
   cn,
   formatCompactNumber,
   formatCurrency,
-  formatDateTime,
   formatDurationSeconds,
   formatPercent,
   formatRelativeTime,
@@ -137,7 +137,7 @@ export function DashboardView({ data }: DashboardViewProps) {
                   </div>
                   {bet.eventEndAt ? (
                     <p className="mt-1 text-xs text-slate-500">
-                      Ends {formatDateTime(bet.eventEndAt)}
+                      Ends <LocalDateTime emptyLabel="" value={bet.eventEndAt} />
                     </p>
                   ) : null}
                   {bet.errorMessage ? (
@@ -330,7 +330,7 @@ function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
             >
               <div className="flex items-center justify-between gap-3">
                 <p className="min-w-0 truncate text-sm font-semibold text-slate-950">
-                  {formatDateTime(run.startedAt)}
+                  <LocalDateTime value={run.startedAt} />
                 </p>
                 <StatusBadge status={run.status} />
               </div>
@@ -386,8 +386,8 @@ function ResultsTable({
                   <StatusBadge status={result.result} />
                 </div>
                 <div className="mt-2 grid gap-1 text-xs text-slate-500">
-                  <p>Bet at {formatDateTime(result.betAt)}</p>
-                  <p>Finished {formatDateTime(result.eventEndAt)}</p>
+                  <p>Bet at <LocalDateTime value={result.betAt} /></p>
+                  <p>Finished <LocalDateTime value={result.eventEndAt} /></p>
                   <p>Best result {result.resolvedOutcome ?? "No result yet"}</p>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-3 text-sm">
@@ -435,10 +435,10 @@ function ResultsTable({
                     </td>
                     <td className="px-3 py-3">{result.selection}</td>
                     <td className="px-3 py-3 text-slate-500">
-                      {formatDateTime(result.betAt)}
+                      <LocalDateTime value={result.betAt} />
                     </td>
                     <td className="px-3 py-3 text-slate-500">
-                      {formatDateTime(result.eventEndAt)}
+                      <LocalDateTime value={result.eventEndAt} />
                     </td>
                     <td className="px-3 py-3">
                       {result.resolvedOutcome ?? "No result yet"}
