@@ -27,25 +27,13 @@ html {
 
 body {
   background:
-    radial-gradient(circle at top left, rgba(18, 124, 108, 0.12), transparent 30%),
-    radial-gradient(circle at top right, rgba(42, 78, 178, 0.12), transparent 24%),
+    radial-gradient(circle at 12% 14%, rgba(18, 124, 108, 0.08), transparent 28%),
+    radial-gradient(circle at 88% 16%, rgba(42, 78, 178, 0.06), transparent 24%),
     linear-gradient(180deg, #f4f6f0 0%, #ebefe8 100%);
   color: var(--foreground);
   font-family: var(--font-ui);
   min-height: 100vh;
-}
-
-body::before {
-  background-image:
-    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
-  background-position: center center;
-  background-size: 36px 36px;
-  content: "";
-  inset: 0;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.42), transparent 84%);
-  pointer-events: none;
-  position: fixed;
+  overflow-x: hidden;
 }
 
 ::selection {
@@ -63,10 +51,4 @@ body::before {
 
 .font-mono {
   font-family: var(--font-code);
-}
-
-@media (max-width: 768px) {
-  body::before {
-    background-size: 28px 28px;
-  }
 }

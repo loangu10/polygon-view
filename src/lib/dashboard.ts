@@ -69,8 +69,20 @@ export type DashboardResultsSummary = {
   wins: number;
 };
 
+export type DashboardHealthChip = {
+  count: number;
+  detail: string;
+  failedCount: number;
+  label: string;
+  status: "healthy" | "unhealthy";
+};
+
 export type DashboardData = {
   generatedAt: string;
+  health: {
+    jobs: DashboardHealthChip;
+    liveBets: DashboardHealthChip;
+  };
   latestRuns: DashboardJobRun[];
   loadedCount: number;
   metrics: DashboardMetric[];
@@ -108,6 +120,7 @@ type StrategyBetPerformanceRow = {
   live_bet_result_status: string | null;
   live_bet_settled: boolean | null;
   live_bet_won_flag: number | boolean | null;
+  last_execution_status: string | null;
   last_error_message: string | null;
   last_attempted_at: string | null;
   loss_flag: number | boolean | null;
@@ -154,7 +167,7 @@ type DashboardQueryValue = boolean | number | string | null | undefined;
 
 const DASHBOARD_PAGE_SIZE = 500;
 const DASHBOARD_REVALIDATE_SECONDS = 45;
-const RECENT_SLICE_LIMIT = 12;
+const RECENT_WINDOW_SCAN_LIMIT = 250;
 
 const SUMMARY_SELECT =
   "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_pnl_usdc,win_flag";
@@ -162,6 +175,8 @@ const RECENT_BETS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
 const RESULTS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
+const HEALTH_LIVE_BETS_SELECT =
+  "fact_key,collected_at_poly,collected_at_event,live_bet_attempted,live_bet_placed,live_bet_placement_status,last_execution_status,last_error_message,signal_count";
 
 function clampRange(value: string | string[] | undefined): DashboardRange {
   const candidate = Array.isArray(value) ? value[0] : value;
@@ -349,47 +364,48 @@ async function fetchStrategyWindowRows(
   return [...polyRows, ...eventRows];
 }
 
-async function fetchStrategyWindowSlice(
-  start: string,
-  options: {
-    end?: string;
-    limit: number;
-    order: string;
-    query?: Record<string, DashboardQueryValue>;
-    select: string;
-  },
-) {
+async function fetchLatestStrategyRows(options: {
+  maxRows?: number;
+  order?: string;
+  pageSize?: number;
+  query?: Record<string, DashboardQueryValue>;
+  select: string;
+}) {
   const baseQuery = {
     is_bet_signal: "eq.true",
-    order: options.order,
     select: options.select,
+    ...(options.order ? { order: options.order } : {}),
     ...(options.query ?? {}),
   };
 
-  const [polyPage, eventPage] = await Promise.all([
-    fetchSupabaseSlice<StrategyBetPerformanceRow>("strategy_bet_performance", {
-      limit: options.limit,
-      query: {
+  const [polyRows, eventRows] = await Promise.all([
+    fetchSupabaseRows<StrategyBetPerformanceRow>(
+      "strategy_bet_performance",
+      {
         ...baseQuery,
-        and: buildWindowClause("collected_at_poly", start, options.end, [
-          "collected_at_poly.not.is.null",
-        ]),
+        and: "(collected_at_poly.not.is.null)",
       },
-      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
-    }),
-    fetchSupabaseSlice<StrategyBetPerformanceRow>("strategy_bet_performance", {
-      limit: options.limit,
-      query: {
+      {
+        maxRows: options.maxRows,
+        pageSize: options.pageSize ?? DASHBOARD_PAGE_SIZE,
+        revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+      },
+    ),
+    fetchSupabaseRows<StrategyBetPerformanceRow>(
+      "strategy_bet_performance",
+      {
         ...baseQuery,
-        and: buildWindowClause("collected_at_event", start, options.end, [
-          "collected_at_poly.is.null",
-        ]),
+        and: "(collected_at_poly.is.null,collected_at_event.not.is.null)",
       },
-      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
-    }),
+      {
+        maxRows: options.maxRows,
+        pageSize: options.pageSize ?? DASHBOARD_PAGE_SIZE,
+        revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+      },
+    ),
   ]);
 
-  return [...polyPage.data, ...eventPage.data];
+  return [...polyRows, ...eventRows];
 }
 
 function getLiveBetErrorMessage(row: StrategyBetPerformanceRow) {
@@ -546,7 +562,9 @@ function buildMetrics(
 ): DashboardMetric[] {
   const current = getSummary(currentRows);
   const previous = getSummary(previousRows);
-  const helper = `vs previous ${rangeDays} days`;
+  const currentResults = getResultsSummary(currentRows);
+  const previousResults = getResultsSummary(previousRows);
+  const helper = `vs prev. ${rangeDays}d`;
 
   const metrics: DashboardMetric[] = [
     {
@@ -559,13 +577,13 @@ function buildMetrics(
       value: current.signalCount,
     },
     {
-      change: pointDelta(current.winRate, previous.winRate),
+      change: pointDelta(currentResults.winRate, previousResults.winRate),
       changeKind: "points",
       helper,
       id: "settled-win-rate",
       label: "Settled win rate",
       type: "points",
-      value: current.winRate,
+      value: currentResults.winRate,
     },
   ];
 
@@ -583,7 +601,7 @@ function buildMetrics(
     metrics.push({
       change: relativeDelta(current.livePlacedCount, previous.livePlacedCount),
       changeKind: "relative",
-      context: `$${current.livePlacedStake.toFixed(0)} placed`,
+      context: `($${current.livePlacedStake.toFixed(0)})`,
       helper,
       id: "live-executions",
       label: "Live bets placed",
@@ -747,6 +765,69 @@ function getLatestTimestamp(rows: StrategyBetPerformanceRow[]) {
   }, null);
 }
 
+function buildJobsHealth(runs: SourceRunRow[]): DashboardHealthChip {
+  const failedCount = runs.filter((run) => {
+    const status = (run.status ?? "unknown").toLowerCase();
+    return status !== "success" || run.errors !== null;
+  }).length;
+  const status =
+    runs.length >= 20 && failedCount === 0 ? "healthy" : "unhealthy";
+
+  return {
+    count: runs.length,
+    detail:
+      status === "healthy"
+        ? `${runs.length} ok · 48h`
+        : `${failedCount} fail · ${runs.length}/20 · 48h`,
+    failedCount,
+    label: "Jobs",
+    status,
+  };
+}
+
+function buildLiveBetsHealth(rows: StrategyBetPerformanceRow[]): DashboardHealthChip {
+  const relevantRows = rows.filter(
+    (row) =>
+      row.live_bet_placed === true ||
+      (row.live_bet_attempted === true && !isDuplicateLiveSkip(row)),
+  );
+  const placedCount = relevantRows.reduce(
+    (total, row) => total + (row.live_bet_placed === true ? toNullableNumber(row.signal_count) ?? 1 : 0),
+    0,
+  );
+  const failedCount = relevantRows.reduce((total, row) => {
+    if (row.live_bet_placed === true) {
+      return total;
+    }
+
+    const status = (row.live_bet_placement_status ?? "").toLowerCase();
+    const executionStatus = (row.last_execution_status ?? "").toLowerCase();
+    const isDuplicateSkipped = executionStatus === "duplicate_match_skipped";
+    const isFailed =
+      row.live_bet_attempted === true &&
+      !isDuplicateSkipped &&
+      (status.includes("fail") ||
+        status.includes("error") ||
+        status.includes("reject") ||
+        status.includes("cancel"));
+
+    return total + (isFailed ? toNullableNumber(row.signal_count) ?? 1 : 0);
+  }, 0);
+  const status =
+    placedCount >= 1 && failedCount === 0 ? "healthy" : "unhealthy";
+
+  return {
+    count: placedCount,
+    detail:
+      status === "healthy"
+        ? `${placedCount} ok · 48h`
+        : `${failedCount} fail · ${placedCount} placed · 48h`,
+    failedCount,
+    label: "Live bets",
+    status,
+  };
+}
+
 async function loadQuery<T>(label: string, operation: () => Promise<T>) {
   try {
     return await operation();
@@ -762,6 +843,22 @@ async function loadQuery<T>(label: string, operation: () => Promise<T>) {
 function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardData {
   return {
     generatedAt: new Date().toISOString(),
+    health: {
+      jobs: {
+        count: 0,
+        detail: "No data",
+        failedCount: 0,
+        label: "Jobs",
+        status: "unhealthy",
+      },
+      liveBets: {
+        count: 0,
+        detail: "No data",
+        failedCount: 0,
+        label: "Live bets",
+        status: "unhealthy",
+      },
+    },
     latestRuns: [],
     loadedCount: 0,
     metrics: [],
@@ -798,6 +895,7 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
   }
 
   const now = new Date();
+  const healthStart = subtractDays(now, 2).toISOString();
   const comparisonStart = subtractDays(now, rangeDays * 2).toISOString();
   const currentStart = subtractDays(now, rangeDays).toISOString();
 
@@ -815,14 +913,12 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
       }),
     );
 
-    const [recentLiveRows, resultRows, sourceRunsPage] = await Promise.all([
+    const [recentLiveRows, resultRows, sourceRunsPage, healthRuns, healthLiveBetRows] = await Promise.all([
       loadQuery("Recent live bets query", () =>
-        fetchStrategyWindowSlice(currentStart, {
-          limit: RECENT_SLICE_LIMIT,
+        fetchLatestStrategyRows({
+          maxRows: RECENT_WINDOW_SCAN_LIMIT,
           order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast",
-          query: {
-            or: "(live_bet_placed.eq.true,live_bet_attempted.eq.true)",
-          },
+          pageSize: 250,
           select: RECENT_BETS_SELECT,
         }),
       ),
@@ -845,6 +941,28 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
           revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
         }),
       ),
+      loadQuery("48h job health query", () =>
+        fetchSupabaseRows<SourceRunRow>(
+          "source_runs",
+          {
+            order: "run_started_at.desc",
+            run_started_at: `gte.${healthStart}`,
+            select: "id,run_started_at,run_finished_at,status,meta,errors",
+          },
+          {
+            pageSize: 250,
+            revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
+          },
+        ),
+      ),
+      loadQuery("48h live bet health query", () =>
+        fetchStrategyWindowRows(healthStart, {
+          maxRows: 250,
+          order: "collected_at_poly.desc.nullslast,collected_at_event.desc.nullslast",
+          pageSize: 250,
+          select: HEALTH_LIVE_BETS_SELECT,
+        }),
+      ),
     ]);
 
     const placedCountsByRun = await loadQuery("Placed bet counts by run query", () =>
@@ -858,6 +976,10 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
 
     return {
       generatedAt: new Date().toISOString(),
+      health: {
+        jobs: buildJobsHealth(healthRuns),
+        liveBets: buildLiveBetsHealth(healthLiveBetRows),
+      },
       latestRuns: buildLatestRuns(placedCountsByRun, sourceRunsPage.data),
       loadedCount: currentRows.length,
       metrics: buildMetrics(rangeDays, currentRows, previousRows),

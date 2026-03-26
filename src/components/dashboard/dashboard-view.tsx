@@ -1,16 +1,9 @@
 import Link from "next/link";
-import {
-  Activity,
-  ArrowUpRight,
-  Bot,
-  CircleDollarSign,
-  Clock3,
-  ShieldCheck,
-  TriangleAlert,
-} from "lucide-react";
+import { Activity, ArrowUpRight, Bot, CircleDollarSign, Clock3, ShieldCheck, TriangleAlert } from "lucide-react";
 
 import type {
   DashboardData,
+  DashboardHealthChip,
   DashboardJobRun,
   DashboardMetric,
   DashboardRange,
@@ -64,47 +57,42 @@ export function DashboardView({ data }: DashboardViewProps) {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-3 py-3 sm:px-6 sm:py-6 lg:px-8">
-      <section className="surface rounded-[28px] px-5 py-4 sm:px-6">
+      <section className="px-1 py-2">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <CompactBadge tone="success">Live</CompactBadge>
-              <CompactBadge tone="neutral">
-                Latest snapshot {formatRelativeTime(data.updatedAt)}
-              </CompactBadge>
-              <CompactBadge tone="neutral">
-                {formatCompactNumber(data.loadedCount)} signal rows analyzed
-              </CompactBadge>
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-[-0.05em] text-slate-950 sm:text-3xl">
-                Polygon
-              </h1>
-              <p className="mt-1 text-sm text-slate-600">
-                Theoretical strategy analytics and live bet tracking based on
-                collected market snapshots from `strategy_bet_performance`.
-              </p>
-            </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-[-0.05em] text-slate-950 sm:text-3xl">
+              Polygon
+            </h1>
           </div>
           <RangeSwitcher activeRange={data.rangeDays} />
         </div>
       </section>
 
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {data.metrics.map((metric) => (
-          <MetricCard key={metric.id} metric={metric} />
-        ))}
+        <HealthMetricCard chip={data.health.jobs} />
+        <HealthMetricCard chip={data.health.liveBets} />
+        {data.metrics
+          .filter((metric) =>
+            ["live-executions", "settled-win-rate"].includes(metric.id),
+          )
+          .sort((left, right) => {
+            const order = ["live-executions", "settled-win-rate"];
+            return order.indexOf(left.id) - order.indexOf(right.id);
+          })
+          .map((metric) => (
+            <MetricCard key={metric.id} metric={metric} />
+          ))}
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_340px]">
         <section className="surface rounded-[28px] p-4 sm:p-5">
           <div className="mb-4">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
               Recent live bets
-            </p>
-            <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-              Latest live bet rows by collected snapshot time
             </h2>
+            <p className="mt-1 text-xs text-slate-600">
+              {formatCompactNumber(data.recentBets.length)} latest live bets
+            </p>
           </div>
           <div className="grid gap-2">
             {data.recentBets.length === 0 ? (
@@ -196,14 +184,18 @@ function MetricCard({ metric }: { metric: DashboardMetric }) {
           <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
             {metric.label}
           </p>
-          <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950">
-            {formatMetricValue(metric)}
-          </p>
           {metric.context ? (
-            <p className="mt-1 text-xs font-medium uppercase tracking-[0.12em] text-slate-500">
-              {metric.context}
+            <div className="mt-2 flex items-baseline gap-2">
+              <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+                {formatMetricValue(metric)}
+              </p>
+              <span className="text-sm font-medium text-slate-500">{metric.context}</span>
+            </div>
+          ) : (
+            <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+              {formatMetricValue(metric)}
             </p>
-          ) : null}
+          )}
         </div>
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 text-slate-700">
           <Icon className="h-4 w-4" />
@@ -250,14 +242,11 @@ function ResultsCard({
     <section className="surface rounded-[28px] p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
             Results
-          </p>
-          <h2 className="mt-1 text-base font-semibold tracking-[-0.03em] text-slate-950">
-            Range win rate
           </h2>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
-            Live placed bets in the selected {rangeDays} day window.
+          <p className="mt-1 text-xs text-slate-600">
+            Live bets over past {rangeDays}d
           </p>
         </div>
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2 text-slate-700">
@@ -304,14 +293,11 @@ function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
     <section className="surface rounded-[28px] p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
             Jobs
-          </p>
-          <h2 className="mt-1 text-base font-semibold tracking-[-0.03em] text-slate-950">
-            Last 5 runs
           </h2>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
-            Latest `source_runs` with placed bets matched by run snapshot time.
+          <p className="mt-1 text-xs text-slate-600">
+            5 latest runs
           </p>
         </div>
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2 text-slate-700">
@@ -358,12 +344,12 @@ function ResultsTable({
   return (
     <section className="surface rounded-[28px] p-5">
       <div className="mb-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
           Result bets
-        </p>
-        <h2 className="mt-1 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-          Results in the selected {rangeDays} day window.
         </h2>
+        <p className="mt-1 text-xs text-slate-600">
+          Settled bets over past {rangeDays}d
+        </p>
       </div>
       {results.length === 0 ? (
         <EmptyState
@@ -502,29 +488,47 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function CompactBadge({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone: "neutral" | "success" | "warning";
-}) {
-  const styles =
-    tone === "success"
+function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
+  const badgeStyles =
+    chip.status === "healthy"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : tone === "warning"
-        ? "border-amber-200 bg-amber-50 text-amber-700"
-        : "border-slate-200 bg-slate-50 text-slate-700";
+      : "border-rose-200 bg-rose-50 text-rose-700";
+  const accentColor = chip.status === "healthy" ? "text-emerald-700" : "text-rose-700";
+  const primaryValue =
+    chip.label === "Jobs" ? `${formatCompactNumber(chip.count)} runs` : `${formatCompactNumber(chip.count)} placed`;
+  const secondaryValue =
+    chip.failedCount === 0
+      ? "0 failed"
+      : `${formatCompactNumber(chip.failedCount)} failed`;
 
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium",
-        styles,
-      )}
-    >
-      {children}
-    </span>
+    <article className="surface rounded-[24px] p-4">
+      <div>
+        <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+          {chip.label} health
+        </p>
+        <span
+          className={cn(
+            "mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
+            badgeStyles,
+          )}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-current" />
+          {chip.status}
+        </span>
+      </div>
+      <div className="mt-4 flex items-baseline gap-2">
+        <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+          {primaryValue}
+        </p>
+        <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+          in last 48h
+        </span>
+      </div>
+      <p className={cn("mt-1 text-sm font-medium", accentColor)}>
+        {secondaryValue}
+      </p>
+    </article>
   );
 }
 
