@@ -24,6 +24,9 @@ type DashboardViewProps = {
   data: DashboardData;
 };
 
+const headlineNumberClass = "text-xl font-semibold leading-none tracking-[-0.04em] text-slate-950";
+const headlineCompanionClass = "text-xl font-semibold tracking-[-0.04em] text-slate-950";
+
 export function DashboardView({ data }: DashboardViewProps) {
   if (data.mode === "error") {
     return (
@@ -200,15 +203,15 @@ function ResultsCard({
         </div>
       </div>
       <div className="px-1">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <p className="text-[2rem] font-semibold leading-none tracking-[-0.05em] text-slate-950">
+        <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
+          <p className={headlineNumberClass}>
             {formatPercent(summary.winRate)}
           </p>
           <p className="text-sm text-slate-500">
-            <span className="font-medium text-slate-700">win rate</span>{" "}
+            <span className={headlineCompanionClass}>win rate</span>{" "}
             <span className="text-slate-400">
-              ({formatCompactNumber(summary.wins)} won, {formatCompactNumber(summary.losses)} lost
-              {summary.pushes > 0 ? `, ${formatCompactNumber(summary.pushes)} push` : ""})
+              ({formatCompactNumber(summary.wins)}W, {formatCompactNumber(summary.losses)}L
+              {summary.pushes > 0 ? `, ${formatCompactNumber(summary.pushes)}P` : ""})
             </span>
           </p>
         </div>
@@ -446,7 +449,7 @@ function CompactResultStat({
       <p className="truncate text-[11px] uppercase tracking-[0.12em] text-slate-400">
         {label}
       </p>
-      <p className={cn("mt-0.5 text-sm font-semibold text-slate-950", tone)}>{value}</p>
+      <p className={cn("mt-0.5 text-sm font-semibold", tone ?? "text-slate-950")}>{value}</p>
     </div>
   );
 }
@@ -457,8 +460,8 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
       : "border-rose-200 bg-rose-50 text-rose-700";
   const accentColor = chip.status === "healthy" ? "text-emerald-700" : "text-rose-700";
-  const primaryValue =
-    chip.label === "Jobs" ? `${formatCompactNumber(chip.count)} runs` : `${formatCompactNumber(chip.count)} placed`;
+  const primaryCount = formatCompactNumber(chip.count);
+  const primarySuffix = chip.label === "Jobs" ? "runs" : "placed";
   const secondaryValue =
     chip.failedCount === 0
       ? "0 failed"
@@ -467,9 +470,9 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
   return (
     <article className="surface flex h-full flex-col rounded-[24px] p-4">
       <div>
-        <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+        <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
           {chip.label} health
-        </p>
+        </h2>
         <span
           className={cn(
             "mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold capitalize",
@@ -481,8 +484,11 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
         </span>
       </div>
       <div className="mt-4 flex items-baseline gap-2">
-        <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
-          {primaryValue}
+        <p className="flex items-baseline gap-1.5 text-slate-950">
+          <span className={headlineNumberClass}>{primaryCount}</span>
+          <span className={headlineCompanionClass}>
+            {primarySuffix}
+          </span>
         </p>
         <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
           in last 48h
@@ -491,6 +497,7 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
       <p className={cn("mt-1 text-sm font-medium", accentColor)}>
         {secondaryValue}
       </p>
+      <p className="mt-1 text-xs text-slate-500">{chip.averageLabel}</p>
       <div className="flex-1" />
     </article>
   );

@@ -74,6 +74,7 @@ export type DashboardResultsSummary = {
 };
 
 export type DashboardHealthChip = {
+  averageLabel: string;
   count: number;
   detail: string;
   failedCount: number;
@@ -778,6 +779,13 @@ function getRunDurationSeconds(run: SourceRunRow) {
   ) / 1000;
 }
 
+function formatAveragePerRun(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: value < 10 ? 2 : 1,
+    minimumFractionDigits: value < 10 ? 2 : 1,
+  }).format(value);
+}
+
 async function fetchPlacedCountsByRun(sourceRuns: SourceRunRow[]) {
   const runStarts = sourceRuns.map((run) => run.run_started_at).filter(Boolean);
 
@@ -998,15 +1006,24 @@ function getLatestTimestamp(rows: StrategyBetPerformanceRow[]) {
   }, null);
 }
 
-function buildJobsHealth(runs: SourceRunRow[]): DashboardHealthChip {
+function buildJobsHealth(
+  runs: SourceRunRow[],
+  analyzedCounts: Map<string, number>,
+): DashboardHealthChip {
   const failedCount = runs.filter((run) => {
     const status = (run.status ?? "unknown").toLowerCase();
     return status !== "success" || run.errors !== null;
   }).length;
   const status =
     runs.length >= 20 && failedCount === 0 ? "healthy" : "unhealthy";
+  const analyzedTotal = runs.reduce(
+    (total, run) => total + (analyzedCounts.get(run.run_started_at) ?? 0),
+    0,
+  );
+  const averageAnalyzed = runs.length === 0 ? 0 : analyzedTotal / runs.length;
 
   return {
+    averageLabel: `${formatAveragePerRun(averageAnalyzed)} analyzed / run`,
     count: runs.length,
     detail:
       status === "healthy"
@@ -1018,7 +1035,10 @@ function buildJobsHealth(runs: SourceRunRow[]): DashboardHealthChip {
   };
 }
 
-function buildLiveBetsHealth(rows: StrategyBetPerformanceRow[]): DashboardHealthChip {
+function buildLiveBetsHealth(
+  rows: StrategyBetPerformanceRow[],
+  runCount: number,
+): DashboardHealthChip {
   const relevantRows = rows.filter(
     (row) =>
       row.live_bet_placed === true ||
@@ -1048,8 +1068,10 @@ function buildLiveBetsHealth(rows: StrategyBetPerformanceRow[]): DashboardHealth
   }, 0);
   const status =
     placedCount >= 1 && failedCount === 0 ? "healthy" : "unhealthy";
+  const averagePlaced = runCount === 0 ? 0 : placedCount / runCount;
 
   return {
+    averageLabel: `${formatAveragePerRun(averagePlaced)} bets / run`,
     count: placedCount,
     detail:
       status === "healthy"
@@ -1078,6 +1100,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
     generatedAt: new Date().toISOString(),
     health: {
       jobs: {
+        averageLabel: "0.00 analyzed / run",
         count: 0,
         detail: "No data",
         failedCount: 0,
@@ -1085,6 +1108,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
         status: "unhealthy",
       },
       liveBets: {
+        averageLabel: "0.00 bets / run",
         count: 0,
         detail: "No data",
         failedCount: 0,
@@ -1200,7 +1224,7 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
     ]);
 
     const runCounts = await loadQuery("Placed bet counts by run query", () =>
-      fetchPlacedCountsByRun(sourceRunsPage.data),
+      fetchPlacedCountsByRun(healthRuns),
     );
     const updatedAt =
       getLatestTimestamp(currentRows) ??
@@ -1211,8 +1235,8 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
     return {
       generatedAt: new Date().toISOString(),
       health: {
-        jobs: buildJobsHealth(healthRuns),
-        liveBets: buildLiveBetsHealth(healthLiveBetRows),
+        jobs: buildJobsHealth(healthRuns, runCounts.analyzedCounts),
+        liveBets: buildLiveBetsHealth(healthLiveBetRows, healthRuns.length),
       },
       latestRuns: buildLatestRuns(runCounts.analyzedCounts, runCounts.placedCounts, sourceRunsPage.data),
       loadedCount: currentRows.length,
