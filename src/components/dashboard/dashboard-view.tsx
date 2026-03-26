@@ -1,11 +1,10 @@
 import Link from "next/link";
-import { Activity, ArrowUpRight, Bot, CircleDollarSign, Clock3, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Bot, Clock3, ShieldCheck, TriangleAlert } from "lucide-react";
 
 import type {
   DashboardData,
   DashboardHealthChip,
   DashboardJobRun,
-  DashboardMetric,
   DashboardRange,
   DashboardResultBet,
   DashboardResultsSummary,
@@ -19,22 +18,11 @@ import {
   formatDurationSeconds,
   formatPercent,
   formatRelativeTime,
-  formatSignedPercent,
-  formatSignedPoints,
 } from "@/lib/format";
 
 type DashboardViewProps = {
   data: DashboardData;
 };
-
-const metricIcons = {
-  "actual-live-pnl": CircleDollarSign,
-  "live-executions": Activity,
-  "portfolio-roi": ShieldCheck,
-  "realized-pnl": CircleDollarSign,
-  "settled-win-rate": ShieldCheck,
-  "signal-count": ArrowUpRight,
-} as const;
 
 export function DashboardView({ data }: DashboardViewProps) {
   if (data.mode === "error") {
@@ -68,72 +56,76 @@ export function DashboardView({ data }: DashboardViewProps) {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <section className="grid grid-cols-2 items-stretch gap-3 xl:grid-cols-4">
         <HealthMetricCard chip={data.health.jobs} />
         <HealthMetricCard chip={data.health.liveBets} />
-        {data.metrics
-          .filter((metric) =>
-            ["live-executions", "settled-win-rate"].includes(metric.id),
-          )
-          .sort((left, right) => {
-            const order = ["live-executions", "settled-win-rate"];
-            return order.indexOf(left.id) - order.indexOf(right.id);
-          })
-          .map((metric) => (
-            <MetricCard key={metric.id} metric={metric} />
-          ))}
+        <ResultsCard
+          className="col-span-2 h-full"
+          rangeDays={data.rangeDays}
+          summary={data.resultsSummary}
+        />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_340px]">
-        <section className="surface rounded-[28px] p-4 sm:p-5">
-          <div className="mb-4">
+      <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+        <section className="surface rounded-[28px] p-4">
+          <div className="mb-3">
             <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
               Recent live bets
             </h2>
             <p className="mt-1 text-xs text-slate-600">
-              {formatCompactNumber(data.recentBets.length)} latest live bets
+              {formatCompactNumber(data.recentBets.length)} ongoing bets or failed attempts
             </p>
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             {data.recentBets.length === 0 ? (
               <EmptyState
-                message="No live bet attempts or placements were returned in the selected period."
+                message="No ongoing live bets or failed attempts were returned in the selected period."
                 title="No recent live bets"
               />
             ) : (
               data.recentBets.map((bet) => (
                 <div
                   key={bet.id}
-                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-4 py-3"
+                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5"
                 >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold leading-5 text-slate-950 sm:truncate">
+                      <p className="truncate text-sm font-semibold leading-5 text-slate-950">
                         {bet.teamOne} vs {bet.teamTwo}
                       </p>
-                      <p className="text-sm text-slate-600 sm:truncate">
-                        {bet.strategy} / {bet.outcome}
-                      </p>
                     </div>
-                    <div className="self-start sm:self-auto">
+                    <div className="shrink-0">
                       <StatusBadge status={bet.status} />
                     </div>
                   </div>
-                  <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                    <span className="font-medium text-slate-900">
-                      {formatValue(bet.pnl ?? bet.amount)}
-                    </span>
-                    <span>{formatRelativeTime(bet.updatedAt)}</span>
-                  </div>
-                  {bet.eventEndAt ? (
-                    <p className="mt-1 text-xs text-slate-500">
-                      Ends <LocalDateTime emptyLabel="" value={bet.eventEndAt} />
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <p className="min-w-0 truncate text-sm text-slate-600">
+                      <span>
+                        {bet.strategy} / {bet.outcome}
+                      </span>
+                      <span className="ml-2 font-medium text-slate-900">
+                        {formatValue(bet.pnl ?? bet.amount)}
+                      </span>
                     </p>
-                  ) : null}
+                    <span className="shrink-0 text-xs text-slate-500">
+                      {formatRelativeTime(bet.updatedAt)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
+                    <span>
+                      {bet.eventEndAt ? (
+                        <>
+                          Ends <LocalDateTime emptyLabel="" value={bet.eventEndAt} />
+                        </>
+                      ) : (
+                        "No end time"
+                      )}
+                    </span>
+                  </div>
                   {bet.errorMessage ? (
-                    <div className="mt-2 flex items-start gap-2 rounded-2xl border border-rose-200/80 bg-rose-50/80 px-3 py-2 text-xs text-rose-800">
-                      <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      <p>{bet.errorMessage}</p>
+                    <div className="mt-1.5 flex items-start gap-2 rounded-2xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-[11px] text-rose-800">
+                      <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+                      <p className="line-clamp-1">{bet.errorMessage}</p>
                     </div>
                   ) : null}
                 </div>
@@ -142,10 +134,7 @@ export function DashboardView({ data }: DashboardViewProps) {
           </div>
         </section>
 
-        <section className="grid gap-3">
-          <ResultsCard rangeDays={data.rangeDays} summary={data.resultsSummary} />
-          <JobsCard runs={data.latestRuns} />
-        </section>
+        <JobsCard runs={data.latestRuns} />
       </section>
 
       <ResultsTable rangeDays={data.rangeDays} results={data.recentResults} />
@@ -174,58 +163,12 @@ function RangeSwitcher({ activeRange }: { activeRange: DashboardRange }) {
   );
 }
 
-function MetricCard({ metric }: { metric: DashboardMetric }) {
-  const Icon = metricIcons[metric.id];
-
-  return (
-    <article className="surface rounded-[24px] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
-            {metric.label}
-          </p>
-          {metric.context ? (
-            <div className="mt-2 flex items-baseline gap-2">
-              <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
-                {formatMetricValue(metric)}
-              </p>
-              <span className="text-sm font-medium text-slate-500">{metric.context}</span>
-            </div>
-          ) : (
-            <p className="mt-2 text-2xl font-semibold tracking-[-0.05em] text-slate-950">
-              {formatMetricValue(metric)}
-            </p>
-          )}
-        </div>
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2.5 text-slate-700">
-          <Icon className="h-4 w-4" />
-        </div>
-      </div>
-      <div className="mt-4 flex items-end justify-between gap-3">
-        <p
-          className={cn(
-            "text-sm font-medium",
-            metric.change !== null && metric.change < 0
-              ? "text-rose-600"
-              : "text-emerald-600",
-          )}
-        >
-          {metric.changeKind === "points"
-            ? formatSignedPoints(metric.change)
-            : formatSignedPercent(metric.change)}
-        </p>
-        <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
-          {metric.helper}
-        </p>
-      </div>
-    </article>
-  );
-}
-
 function ResultsCard({
+  className,
   rangeDays,
   summary,
 }: {
+  className?: string;
   rangeDays: DashboardRange;
   summary: DashboardResultsSummary;
 }) {
@@ -239,7 +182,7 @@ function ResultsCard({
           : "text-slate-900";
 
   return (
-    <section className="surface rounded-[28px] p-4">
+    <section className={cn("surface flex h-full flex-col rounded-[28px] p-4", className)}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
@@ -253,36 +196,38 @@ function ResultsCard({
           <ShieldCheck className="h-4 w-4" />
         </div>
       </div>
-      <div className="rounded-3xl border border-slate-200/80 bg-slate-50/70 px-4 py-3">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between sm:gap-3">
-          <p className="text-2xl font-semibold tracking-[-0.05em] text-slate-950">
+      <div className="px-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p className="text-[2rem] font-semibold leading-none tracking-[-0.05em] text-slate-950">
             {formatPercent(summary.winRate)}
           </p>
-          <p className="text-xs text-slate-500">
-            {formatCompactNumber(summary.wins)} won, {formatCompactNumber(summary.losses)} lost
-            {summary.pushes > 0 ? `, ${formatCompactNumber(summary.pushes)} push` : ""}
+          <p className="text-sm text-slate-500">
+            <span className="font-medium text-slate-700">win rate</span>{" "}
+            <span className="text-slate-400">
+              ({formatCompactNumber(summary.wins)} won, {formatCompactNumber(summary.losses)} lost
+              {summary.pushes > 0 ? `, ${formatCompactNumber(summary.pushes)} push` : ""})
+            </span>
           </p>
         </div>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <MiniStat
+      <div className="mt-2 grid grid-cols-4 gap-2">
+        <CompactResultStat
           label="Placed bets"
           value={formatCompactNumber(summary.placedCount)}
         />
-        <MiniStat
+        <CompactResultStat
           label="Settled bets"
           value={formatCompactNumber(summary.settledCount)}
         />
-        <MiniStat
+        <CompactResultStat
           label="Pending bets"
           value={formatCompactNumber(summary.pending)}
         />
-        <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2">
-          <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Benefit</p>
-          <p className={cn("mt-1 text-sm font-semibold", benefitTone)}>
-            {summary.benefit === null ? "No PnL yet" : formatCurrency(summary.benefit, 2)}
-          </p>
-        </div>
+        <CompactResultStat
+          label="Benefit"
+          tone={benefitTone}
+          value={summary.benefit === null ? "No PnL yet" : formatCurrency(summary.benefit, 2)}
+        />
       </div>
     </section>
   );
@@ -324,7 +269,10 @@ function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
               </div>
               <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
                 <span>{formatDurationSeconds(run.durationSeconds)}</span>
-                <span>{formatCompactNumber(run.placedCount)} placed</span>
+                <span>
+                  {formatCompactNumber(run.placedCount)} placed ·{" "}
+                  {formatCompactNumber(run.analyzedCount)} analyzed
+                </span>
               </div>
             </div>
           ))
@@ -459,18 +407,6 @@ function ResultsTable({
   );
 }
 
-function formatMetricValue(metric: DashboardMetric) {
-  if (metric.type === "currency") {
-    return formatCurrency(metric.value);
-  }
-
-  if (metric.type === "points") {
-    return formatPercent(metric.value);
-  }
-
-  return formatCompactNumber(metric.value);
-}
-
 function formatValue(value: number | null) {
   if (value === null) {
     return "No PnL yet";
@@ -479,11 +415,21 @@ function formatValue(value: number | null) {
   return formatCurrency(value);
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function CompactResultStat({
+  label,
+  tone,
+  value,
+}: {
+  label: string;
+  tone?: string;
+  value: string;
+}) {
   return (
     <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-0.5 text-sm font-semibold text-slate-950">{value}</p>
+      <p className="truncate text-[11px] uppercase tracking-[0.12em] text-slate-400">
+        {label}
+      </p>
+      <p className={cn("mt-0.5 text-sm font-semibold text-slate-950", tone)}>{value}</p>
     </div>
   );
 }
@@ -502,7 +448,7 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
       : `${formatCompactNumber(chip.failedCount)} failed`;
 
   return (
-    <article className="surface rounded-[24px] p-4">
+    <article className="surface flex h-full flex-col rounded-[24px] p-4">
       <div>
         <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
           {chip.label} health
@@ -528,6 +474,7 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
       <p className={cn("mt-1 text-sm font-medium", accentColor)}>
         {secondaryValue}
       </p>
+      <div className="flex-1" />
     </article>
   );
 }
