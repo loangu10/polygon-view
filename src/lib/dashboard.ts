@@ -32,6 +32,7 @@ export type DashboardRecentBet = {
   id: string;
   outcome: string;
   pnl: number | null;
+  sharePrice: number | null;
   status: string;
   strategy: string;
   teamOne: string;
@@ -47,6 +48,7 @@ export type DashboardResultBet = {
   pnl: number | null;
   resolvedOutcome: string | null;
   result: string;
+  sharePrice: number | null;
   selection: string;
 };
 
@@ -101,10 +103,12 @@ export type DashboardData = {
 type StrategyBetPerformanceRow = {
   actual_amount_usdc: number | string | null;
   actual_cost_usdc: number | string | null;
+  actual_entry_price: number | string | null;
   actual_realized_roi: number | string | null;
   actual_realized_roi_estimated: number | string | null;
   actual_realized_pnl_estimated_usdc: number | string | null;
   actual_realized_pnl_usdc: number | string | null;
+  actual_shares: number | string | null;
   collected_at_event: string | null;
   collected_at_poly: string | null;
   competition: string | null;
@@ -132,6 +136,7 @@ type StrategyBetPerformanceRow = {
   pm_team_1: string | null;
   pm_team_2: string | null;
   resolved_outcome_label: string | null;
+  selected_prob_pm: number | string | null;
   settled_at: string | null;
   signal_count: number | string | null;
   source_bet_id: string | null;
@@ -141,6 +146,7 @@ type StrategyBetPerformanceRow = {
   strategy_threshold: number | string | null;
   theoretical_roi: number | string | null;
   theoretical_pnl_usdc: number | string | null;
+  theoretical_shares: number | string | null;
   theoretical_stake_usdc: number | string | null;
   win_flag: number | boolean | null;
 };
@@ -180,11 +186,11 @@ const RECENT_WINDOW_SCAN_LIMIT = 250;
 const RUN_SNAPSHOT_MATCH_WINDOW_MINUTES = 90;
 
 const SUMMARY_SELECT =
-  "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_pnl_usdc,win_flag";
+  "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
 const RECENT_BETS_SELECT =
-  "fact_key,match_id,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_execution_status,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
+  "fact_key,match_id,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_execution_status,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,selected_prob_pm,theoretical_shares";
 const RESULTS_SELECT =
-  "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,theoretical_stake_usdc,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc";
+  "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
 const HEALTH_LIVE_BETS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,live_bet_attempted,live_bet_placed,live_bet_placement_status,last_execution_status,last_error_message,signal_count";
 
@@ -325,6 +331,22 @@ function getActualLivePnlValue(row: StrategyBetPerformanceRow) {
 
   const liveResult = getLiveResultState(row);
   const stake = getStakeValue(row);
+  const shares =
+    toNullableNumber(row.actual_shares) ??
+    (() => {
+      const cost = toNullableNumber(row.actual_cost_usdc) ?? toNullableNumber(row.actual_amount_usdc);
+      const entryPrice = toNullableNumber(row.actual_entry_price);
+
+      if (cost !== null && entryPrice !== null && entryPrice > 0) {
+        return cost / entryPrice;
+      }
+
+      return null;
+    })();
+
+  if (liveResult === "won" && shares !== null && stake !== null) {
+    return shares - stake;
+  }
 
   if (liveResult === "lost" && stake !== null) {
     return -stake;
@@ -334,7 +356,30 @@ function getActualLivePnlValue(row: StrategyBetPerformanceRow) {
     return 0;
   }
 
+  const theoreticalPnl = toNullableNumber(row.theoretical_pnl_usdc);
+
+  if (liveResult === "won" && theoreticalPnl !== null) {
+    return theoreticalPnl;
+  }
+
   return null;
+}
+
+function getSharePriceValue(row: StrategyBetPerformanceRow) {
+  const explicitEntryPrice = toNullableNumber(row.actual_entry_price);
+
+  if (explicitEntryPrice !== null) {
+    return explicitEntryPrice;
+  }
+
+  const shares = toNullableNumber(row.actual_shares) ?? toNullableNumber(row.theoretical_shares);
+  const stake = getStakeValue(row);
+
+  if (shares !== null && shares > 0 && stake !== null) {
+    return stake / shares;
+  }
+
+  return toNullableNumber(row.selected_prob_pm);
 }
 
 function getStakeValue(row: StrategyBetPerformanceRow) {
@@ -680,16 +725,16 @@ function buildMetrics(
       value: current.realizedPnlSum ?? 0,
     });
   } else {
-    metrics.push({
-      change: relativeDelta(currentResults.pending, previousResults.pending),
-      changeKind: "relative",
-      context: `($${currentResults.pendingStake.toFixed(0)})`,
-      helper,
-      id: "live-executions",
-      label: "Pending live bets",
-      type: "compact",
-      value: currentResults.pending,
-    });
+      metrics.push({
+        change: relativeDelta(currentResults.pending, previousResults.pending),
+        changeKind: "relative",
+        context: `($${currentResults.pendingStake.toFixed(0)})`,
+        helper,
+        id: "live-executions",
+        label: "Pending",
+        type: "compact",
+        value: currentResults.pending,
+      });
   }
 
   if (current.portfolioRoi !== null || previous.portfolioRoi !== null) {
@@ -905,6 +950,7 @@ function buildRecentBets(rows: StrategyBetPerformanceRow[]) {
         id: row.fact_key,
         outcome: row.outcome_label ?? "Unknown outcome",
         pnl: getActualLivePnlValue(row),
+        sharePrice: getSharePriceValue(row),
         status,
         strategy: row.strategy_name ?? "unknown",
         teamOne: row.pm_team_1 ?? "Unknown",
@@ -919,8 +965,8 @@ function buildRecentResults(rows: StrategyBetPerformanceRow[]) {
     .filter((row) => row.live_bet_placed === true && getLiveResultState(row) !== null)
     .sort((left, right) => {
       return (
-        new Date(right.settled_at ?? right.event_end_time ?? 0).getTime() -
-        new Date(left.settled_at ?? left.event_end_time ?? 0).getTime()
+        new Date(right.event_end_time ?? right.settled_at ?? 0).getTime() -
+        new Date(left.event_end_time ?? left.settled_at ?? 0).getTime()
       );
     })
     .map((row) => ({
@@ -931,6 +977,7 @@ function buildRecentResults(rows: StrategyBetPerformanceRow[]) {
       pnl: getActualLivePnlValue(row),
       resolvedOutcome: row.resolved_outcome_label,
       result: getLiveResultState(row) ?? "unknown",
+      sharePrice: getSharePriceValue(row),
       selection: row.outcome_label ?? "Unknown outcome",
     }));
 }

@@ -67,7 +67,7 @@ export function DashboardView({ data }: DashboardViewProps) {
       </section>
 
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <section className="surface rounded-[28px] p-4">
+        <section className="surface w-full rounded-[28px] p-4">
           <div className="mb-3">
             <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
               Recent live bets
@@ -89,38 +89,41 @@ export function DashboardView({ data }: DashboardViewProps) {
                   className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    <div className="min-w-0 space-y-0.5">
                       <p className="truncate text-sm font-semibold leading-5 text-slate-950">
                         {bet.teamOne} vs {bet.teamTwo}
                       </p>
+                      <p className="truncate text-sm leading-5 text-slate-600">
+                        <span>
+                          {bet.strategy} / {bet.outcome}
+                        </span>
+                        <span className="ml-2 font-medium text-slate-900">
+                          {formatValue(bet.pnl ?? bet.amount)}
+                        </span>
+                        {bet.sharePrice !== null ? (
+                          <span className="ml-2 text-slate-500">
+                            ({formatCurrency(bet.sharePrice, 2)}/share)
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="text-xs leading-5 text-slate-500">
+                        {bet.eventEndAt ? (
+                          <>
+                            Ends <LocalDateTime emptyLabel="" value={bet.eventEndAt} />
+                          </>
+                        ) : (
+                          "No end time"
+                        )}
+                      </p>
                     </div>
-                    <div className="shrink-0">
-                      <StatusBadge status={bet.status} />
+                    <div className="shrink-0 space-y-0.5 text-right">
+                      <div>
+                        <StatusBadge status={bet.status} />
+                      </div>
+                      <p className="text-xs leading-5 text-slate-500">
+                        {formatRelativeTime(bet.updatedAt)}
+                      </p>
                     </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-3">
-                    <p className="min-w-0 truncate text-sm text-slate-600">
-                      <span>
-                        {bet.strategy} / {bet.outcome}
-                      </span>
-                      <span className="ml-2 font-medium text-slate-900">
-                        {formatValue(bet.pnl ?? bet.amount)}
-                      </span>
-                    </p>
-                    <span className="shrink-0 text-xs text-slate-500">
-                      {formatRelativeTime(bet.updatedAt)}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
-                    <span>
-                      {bet.eventEndAt ? (
-                        <>
-                          Ends <LocalDateTime emptyLabel="" value={bet.eventEndAt} />
-                        </>
-                      ) : (
-                        "No end time"
-                      )}
-                    </span>
                   </div>
                   {bet.errorMessage ? (
                     <div className="mt-1.5 flex items-start gap-2 rounded-2xl border border-rose-200/80 bg-rose-50/80 px-2.5 py-1.5 text-[11px] text-rose-800">
@@ -182,7 +185,7 @@ function ResultsCard({
           : "text-slate-900";
 
   return (
-    <section className={cn("surface flex h-full flex-col rounded-[28px] p-4", className)}>
+    <section className={cn("surface flex h-full w-full flex-col rounded-[28px] p-4", className)}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
@@ -210,17 +213,17 @@ function ResultsCard({
           </p>
         </div>
       </div>
-      <div className="mt-2 grid grid-cols-4 gap-2">
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <CompactResultStat
-          label="Placed bets"
+          label="Placed"
           value={formatCompactNumber(summary.placedCount)}
         />
         <CompactResultStat
-          label="Settled bets"
+          label="Settled"
           value={formatCompactNumber(summary.settledCount)}
         />
         <CompactResultStat
-          label="Pending bets"
+          label="Pending"
           value={formatCompactNumber(summary.pending)}
         />
         <CompactResultStat
@@ -235,7 +238,7 @@ function ResultsCard({
 
 function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
   return (
-    <section className="surface rounded-[28px] p-4">
+    <section className="surface w-full rounded-[28px] p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
@@ -290,7 +293,7 @@ function ResultsTable({
   results: DashboardResultBet[];
 }) {
   return (
-    <section className="surface rounded-[28px] p-5">
+    <section className="surface w-full rounded-[28px] p-4 sm:p-5">
       <div className="mb-4">
         <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
           Result bets
@@ -318,6 +321,11 @@ function ResultsTable({
                       {result.matchLabel}
                     </p>
                     <p className="text-sm text-slate-600">{result.selection}</p>
+                    {result.sharePrice !== null ? (
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {formatCurrency(result.sharePrice, 2)}/share
+                      </p>
+                    ) : null}
                   </div>
                   <StatusBadge status={result.result} />
                 </div>
@@ -369,7 +377,16 @@ function ResultsTable({
                     <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
                       {result.matchLabel}
                     </td>
-                    <td className="px-3 py-3">{result.selection}</td>
+                    <td className="px-3 py-3">
+                      <div>
+                        <p>{result.selection}</p>
+                        {result.sharePrice !== null ? (
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {formatCurrency(result.sharePrice, 2)}/share
+                          </p>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="px-3 py-3 text-slate-500">
                       <LocalDateTime value={result.betAt} />
                     </td>
