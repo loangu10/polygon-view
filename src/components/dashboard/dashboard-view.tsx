@@ -1,16 +1,22 @@
-import Link from "next/link";
+"use client";
+
+import { useEffect, useState } from "react";
 import { Bot, Clock3, ShieldCheck, TriangleAlert } from "lucide-react";
 
 import type {
   DashboardData,
   DashboardHealthChip,
   DashboardJobRun,
-  DashboardRange,
   DashboardResultBet,
   DashboardResultsSummary,
 } from "@/lib/dashboard";
+import {
+  ResultsCardLoading,
+  ResultsTableLoading,
+} from "@/components/dashboard/dashboard-loading";
 import { LocalDateTime } from "@/components/time/local-date-time";
-import { dashboardRanges } from "@/lib/dashboard";
+import { RangeSwitcher } from "@/components/dashboard/range-switcher";
+import { type DashboardRange } from "@/lib/dashboard-range";
 import {
   cn,
   formatCompactNumber,
@@ -28,6 +34,9 @@ const headlineNumberClass = "text-xl font-semibold leading-none tracking-[-0.04e
 const headlineCompanionClass = "text-xl font-semibold tracking-[-0.04em] text-slate-950";
 
 export function DashboardView({ data }: DashboardViewProps) {
+  const [pendingRange, setPendingRange] = useState<DashboardRange | null>(null);
+  const isRangeRefreshing = pendingRange !== null && pendingRange !== data.rangeDays;
+
   if (data.mode === "error") {
     return (
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-3 py-5 sm:px-6 sm:py-6 lg:px-8">
@@ -55,25 +64,36 @@ export function DashboardView({ data }: DashboardViewProps) {
               Polygon
             </h1>
           </div>
-          <RangeSwitcher activeRange={data.rangeDays} />
+          <RangeSwitcher
+            activeRange={data.rangeDays}
+            pendingRange={pendingRange}
+            onRefreshError={() => setPendingRange(null)}
+            onRefreshStart={setPendingRange}
+          />
         </div>
       </section>
 
       <section className="grid grid-cols-2 items-stretch gap-3 xl:grid-cols-4">
         <HealthMetricCard chip={data.health.jobs} />
         <HealthMetricCard chip={data.health.liveBets} />
-        <ResultsCard
-          className="col-span-2 h-full"
-          rangeDays={data.rangeDays}
-          summary={data.resultsSummary}
-        />
+        <div className="col-span-2 h-full">
+          {isRangeRefreshing ? (
+            <ResultsCardLoading />
+          ) : (
+            <ResultsCard
+              className="h-full"
+              rangeDays={data.rangeDays}
+              summary={data.resultsSummary}
+            />
+          )}
+        </div>
       </section>
 
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <section className="surface w-full rounded-[28px] p-4">
           <div className="mb-3">
             <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
-              Recent live bets
+              Ongoing live bets
             </h2>
             <p className="mt-1 text-xs text-slate-600">
               {formatCompactNumber(data.recentBets.length)} ongoing bets or failed attempts
@@ -97,17 +117,33 @@ export function DashboardView({ data }: DashboardViewProps) {
                         {bet.teamOne} vs {bet.teamTwo}
                       </p>
                       <p className="truncate text-sm leading-5 text-slate-600">
-                        <span>
-                          {bet.strategy} / {bet.outcome}
-                        </span>
-                        <span className="ml-2 font-medium text-slate-900">
-                          {formatValue(bet.pnl ?? bet.amount)}
-                        </span>
-                        {bet.sharePrice !== null ? (
-                          <span className="ml-2 text-slate-500">
-                            ({formatCurrency(bet.sharePrice, 2)}/share)
-                          </span>
+                        <span>{bet.strategy}</span>
+                        <span className="mx-1.5 text-slate-400">-</span>
+                        <span>{bet.outcome}</span>
+                        {shouldShowInlineBetAmount(bet.status) ? (
+                          <>
+                            <span className="mx-1.5 text-slate-400">-</span>
+                            <span className="font-medium text-slate-900">
+                              {formatValue(bet.pnl ?? bet.amount)}
+                            </span>
+                          </>
                         ) : null}
+                        {bet.sharePrice !== null ? (
+                          <>
+                            <span className="mx-1.5 text-slate-400">-</span>
+                            <span className="text-slate-500">
+                              {formatCurrency(bet.sharePrice, 2)}/share
+                            </span>
+                          </>
+                        ) : null}
+                        <span className="mx-1.5 text-slate-400">-</span>
+                        <span className="text-slate-500">
+                          PM {formatProbabilityValue(bet.pmProbability)}
+                        </span>
+                        <span className="mx-1.5 text-slate-400">-</span>
+                        <span className="text-slate-500">
+                          Books {formatProbabilityValue(bet.bookmakerProbability)}
+                        </span>
                       </p>
                       <p className="text-xs leading-5 text-slate-500">
                         {bet.eventEndAt ? (
@@ -121,7 +157,11 @@ export function DashboardView({ data }: DashboardViewProps) {
                     </div>
                     <div className="shrink-0 space-y-0.5 text-right">
                       <div>
-                        <StatusBadge status={bet.status} />
+                        <StatusBadge
+                          label={getLiveBetBadgeLabel(bet.amount, bet.status)}
+                          showDot={false}
+                          status={bet.status}
+                        />
                       </div>
                       <p className="text-xs leading-5 text-slate-500">
                         {formatRelativeTime(bet.updatedAt)}
@@ -143,29 +183,12 @@ export function DashboardView({ data }: DashboardViewProps) {
         <JobsCard runs={data.latestRuns} />
       </section>
 
-      <ResultsTable rangeDays={data.rangeDays} results={data.recentResults} />
+      {isRangeRefreshing ? (
+        <ResultsTableLoading />
+      ) : (
+        <ResultsTable rangeDays={data.rangeDays} results={data.recentResults} />
+      )}
     </main>
-  );
-}
-
-function RangeSwitcher({ activeRange }: { activeRange: DashboardRange }) {
-  return (
-    <div className="inline-flex w-fit flex-wrap items-center gap-1 rounded-full border border-slate-200/70 bg-white/70 p-1 backdrop-blur">
-      {dashboardRanges.map((range) => (
-        <Link
-          key={range}
-          className={cn(
-            "rounded-full px-3 py-1.5 text-sm font-medium transition",
-            activeRange === range
-              ? "bg-slate-950 text-white"
-              : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
-          )}
-          href={`/?range=${range}`}
-        >
-          {range}d
-        </Link>
-      ))}
-    </div>
   );
 }
 
@@ -295,6 +318,69 @@ function ResultsTable({
   rangeDays: DashboardRange;
   results: DashboardResultBet[];
 }) {
+  const [oddsById, setOddsById] = useState<
+    Record<string, { bookmakerProbability: number | null; pmProbability: number | null }>
+  >({});
+
+  useEffect(() => {
+    const missingOddsIds = results
+      .filter(
+        (result) =>
+          result.pmProbability === null ||
+          result.bookmakerProbability === null,
+      )
+      .map((result) => result.id);
+
+    if (missingOddsIds.length === 0) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    void fetch("/api/result-odds", {
+      body: JSON.stringify({ ids: missingOddsIds }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          return;
+        }
+
+        const body = (await response.json().catch(() => null)) as {
+          odds?: Array<{
+            bookmakerProbability: number | null;
+            id: string;
+            pmProbability: number | null;
+          }>;
+        } | null;
+
+        if (isCancelled || !body?.odds) {
+          return;
+        }
+
+        setOddsById(
+          body.odds.reduce<Record<string, { bookmakerProbability: number | null; pmProbability: number | null }>>(
+            (next, item) => {
+              next[item.id] = {
+                bookmakerProbability: item.bookmakerProbability,
+                pmProbability: item.pmProbability,
+              };
+              return next;
+            },
+            {},
+          ),
+        );
+      })
+      .catch(() => {});
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [results]);
+
   return (
     <section className="surface w-full rounded-[28px] p-4 sm:p-5">
       <div className="mb-4">
@@ -313,98 +399,44 @@ function ResultsTable({
       ) : (
         <>
           <div className="grid gap-2 md:hidden">
-            {results.map((result) => (
-              <div
-                key={result.id}
-                className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-950">
-                      {result.matchLabel}
-                    </p>
-                    <p className="text-sm text-slate-600">{result.selection}</p>
-                    {result.sharePrice !== null ? (
-                      <p className="mt-0.5 text-xs text-slate-500">
-                        {formatCurrency(result.sharePrice, 2)}/share
-                      </p>
-                    ) : null}
-                  </div>
-                  <StatusBadge status={result.result} />
-                </div>
-                <div className="mt-2 grid gap-1 text-xs text-slate-500">
-                  <p>Bet at <LocalDateTime value={result.betAt} /></p>
-                  <p>Finished <LocalDateTime value={result.eventEndAt} /></p>
-                  <p>Best result {result.resolvedOutcome ?? "No result yet"}</p>
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                  <span className="text-slate-500">P&amp;L</span>
-                  <span
-                    className={cn(
-                      "font-semibold",
-                      result.pnl === null
-                        ? "text-slate-900"
-                        : result.pnl > 0
-                          ? "text-emerald-700"
-                          : result.pnl < 0
-                            ? "text-rose-700"
-                            : "text-slate-900",
-                    )}
-                  >
-                    {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+            {results.map((result) => {
+              const mergedOdds = oddsById[result.id];
+              const pmProbability = mergedOdds?.pmProbability ?? result.pmProbability;
+              const bookmakerProbability =
+                mergedOdds?.bookmakerProbability ?? result.bookmakerProbability;
 
-          <div className="hidden overflow-x-auto md:block">
-            <table className="min-w-full border-separate border-spacing-y-2">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                <th className="px-3 py-1 font-medium">Match</th>
-                <th className="px-3 py-1 font-medium">Bet</th>
-                <th className="px-3 py-1 font-medium">Bet at</th>
-                <th className="px-3 py-1 font-medium">Finished</th>
-                <th className="px-3 py-1 font-medium">Result</th>
-                <th className="px-3 py-1 font-medium">Win/Loss</th>
-                <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
-              </tr>
-            </thead>
-              <tbody>
-                {results.map((result) => (
-                  <tr
-                    key={result.id}
-                    className="rounded-2xl border border-slate-200/80 bg-slate-50/70 text-sm text-slate-700"
-                  >
-                    <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
-                      {result.matchLabel}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div>
-                        <p>{result.selection}</p>
-                        {result.sharePrice !== null ? (
-                          <p className="mt-0.5 text-xs text-slate-500">
-                            {formatCurrency(result.sharePrice, 2)}/share
-                          </p>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-slate-500">
-                      <LocalDateTime value={result.betAt} />
-                    </td>
-                    <td className="px-3 py-3 text-slate-500">
-                      <LocalDateTime value={result.eventEndAt} />
-                    </td>
-                    <td className="px-3 py-3">
-                      {result.resolvedOutcome ?? "No result yet"}
-                    </td>
-                    <td className="px-3 py-3">
-                      <StatusBadge status={result.result} />
-                    </td>
-                    <td
+              return (
+                <div
+                  key={result.id}
+                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-950">
+                        {result.matchLabel}
+                      </p>
+                      <p className="text-sm text-slate-600">{result.selection}</p>
+                      {result.sharePrice !== null ? (
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {formatCurrency(result.sharePrice, 2)}/share
+                        </p>
+                      ) : null}
+                      <p className="mt-1 text-xs text-slate-500">
+                        PM {formatProbabilityValue(pmProbability)} · Books{" "}
+                        {formatProbabilityValue(bookmakerProbability)}
+                      </p>
+                    </div>
+                    <StatusBadge status={result.result} />
+                  </div>
+                  <div className="mt-2 grid gap-1 text-xs text-slate-500">
+                    <p>Bet at <LocalDateTime value={result.betAt} /></p>
+                    <p>Finished <LocalDateTime value={result.eventEndAt} /></p>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                    <span className="text-slate-500">P&amp;L</span>
+                    <span
                       className={cn(
-                        "rounded-r-2xl px-3 py-3 text-right font-semibold",
+                        "font-semibold",
                         result.pnl === null
                           ? "text-slate-900"
                           : result.pnl > 0
@@ -415,9 +447,83 @@ function ResultsTable({
                       )}
                     >
                       {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
-                    </td>
-                  </tr>
-                ))}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
+            <table className="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
+                <th className="px-3 py-1 font-medium">Match</th>
+                <th className="px-3 py-1 font-medium">Bet</th>
+                <th className="px-3 py-1 font-medium">Bet at</th>
+                <th className="px-3 py-1 font-medium">Finished</th>
+                <th className="px-3 py-1 font-medium">Odds</th>
+                <th className="px-3 py-1 font-medium">Win/Loss</th>
+                <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
+              </tr>
+            </thead>
+              <tbody>
+                {results.map((result) => {
+                  const mergedOdds = oddsById[result.id];
+                  const pmProbability = mergedOdds?.pmProbability ?? result.pmProbability;
+                  const bookmakerProbability =
+                    mergedOdds?.bookmakerProbability ?? result.bookmakerProbability;
+
+                  return (
+                    <tr
+                      key={result.id}
+                      className="rounded-2xl border border-slate-200/80 bg-slate-50/70 text-sm text-slate-700"
+                    >
+                      <td className="rounded-l-2xl px-3 py-3 font-medium text-slate-950">
+                        {result.matchLabel}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div>
+                          <p>{result.selection}</p>
+                          {result.sharePrice !== null ? (
+                            <p className="mt-0.5 text-xs text-slate-500">
+                              {formatCurrency(result.sharePrice, 2)}/share
+                            </p>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-slate-500">
+                        <LocalDateTime value={result.betAt} />
+                      </td>
+                      <td className="px-3 py-3 text-slate-500">
+                        <LocalDateTime value={result.eventEndAt} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="text-xs leading-5 text-slate-500">
+                          <p>PM {formatProbabilityValue(pmProbability)}</p>
+                          <p>Books {formatProbabilityValue(bookmakerProbability)}</p>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <StatusBadge status={result.result} />
+                      </td>
+                      <td
+                        className={cn(
+                          "rounded-r-2xl px-3 py-3 text-right font-semibold",
+                          result.pnl === null
+                            ? "text-slate-900"
+                            : result.pnl > 0
+                              ? "text-emerald-700"
+                              : result.pnl < 0
+                                ? "text-rose-700"
+                                : "text-slate-900",
+                        )}
+                      >
+                        {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -433,6 +539,14 @@ function formatValue(value: number | null) {
   }
 
   return formatCurrency(value);
+}
+
+function formatProbabilityValue(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "No data";
+  }
+
+  return value.toFixed(2);
 }
 
 function CompactResultStat({
@@ -479,7 +593,6 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
             badgeStyles,
           )}
         >
-          <span className="h-1.5 w-1.5 rounded-full bg-current" />
           {chip.status}
         </span>
       </div>
@@ -521,7 +634,29 @@ function EmptyState({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function getLiveBetBadgeLabel(amount: number | null, status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized === "placed" && amount !== null) {
+    return `${formatCurrency(amount, 0)} Placed`;
+  }
+
+  return status;
+}
+
+function shouldShowInlineBetAmount(status: string) {
+  return status.toLowerCase() !== "placed";
+}
+
+function StatusBadge({
+  label,
+  showDot = false,
+  status,
+}: {
+  label?: string;
+  showDot?: boolean;
+  status: string;
+}) {
   const normalized = status.toLowerCase();
   const styles =
     normalized === "placed" || normalized === "won" || normalized === "success"
@@ -542,8 +677,8 @@ function StatusBadge({ status }: { status: string }) {
         styles,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {status}
+      {showDot ? <span className="h-1.5 w-1.5 rounded-full bg-current" /> : null}
+      {label ?? status}
     </span>
   );
 }

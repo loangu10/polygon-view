@@ -3,10 +3,7 @@ import {
   fetchSupabaseRows,
   hasSupabaseConfig,
 } from "@/lib/supabase-rest";
-
-export const dashboardRanges = [7, 30, 90] as const;
-
-export type DashboardRange = (typeof dashboardRanges)[number];
+import { type DashboardRange, parseDashboardRange } from "@/lib/dashboard-range";
 
 export type DashboardMetric = {
   change: number | null;
@@ -27,10 +24,12 @@ export type DashboardMetric = {
 
 export type DashboardRecentBet = {
   amount: number | null;
+  bookmakerProbability: number | null;
   errorMessage: string | null;
   eventEndAt: string | null;
   id: string;
   outcome: string;
+  pmProbability: number | null;
   pnl: number | null;
   sharePrice: number | null;
   status: string;
@@ -42,9 +41,11 @@ export type DashboardRecentBet = {
 
 export type DashboardResultBet = {
   betAt: string | null;
+  bookmakerProbability: number | null;
   eventEndAt: string | null;
   id: string;
   matchLabel: string;
+  pmProbability: number | null;
   pnl: number | null;
   resolvedOutcome: string | null;
   result: string;
@@ -137,6 +138,7 @@ type StrategyBetPerformanceRow = {
   pm_team_1: string | null;
   pm_team_2: string | null;
   resolved_outcome_label: string | null;
+  selected_gmean: number | string | null;
   selected_prob_pm: number | string | null;
   settled_at: string | null;
   signal_count: number | string | null;
@@ -189,22 +191,11 @@ const RUN_SNAPSHOT_MATCH_WINDOW_MINUTES = 90;
 const SUMMARY_SELECT =
   "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
 const RECENT_BETS_SELECT =
-  "fact_key,match_id,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_execution_status,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,selected_prob_pm,theoretical_shares";
+  "fact_key,match_id,collected_at_poly,collected_at_event,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,last_execution_status,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,selected_prob_pm,selected_gmean,theoretical_shares";
 const RESULTS_SELECT =
-  "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
+  "fact_key,collected_at_poly,collected_at_event,event_end_time,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,selected_gmean,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
 const HEALTH_LIVE_BETS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,live_bet_attempted,live_bet_placed,live_bet_placement_status,last_execution_status,last_error_message,signal_count";
-
-function clampRange(value: string | string[] | undefined): DashboardRange {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  const parsed = Number(candidate);
-
-  if (dashboardRanges.includes(parsed as DashboardRange)) {
-    return parsed as DashboardRange;
-  }
-
-  return 30;
-}
 
 function toNullableNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
@@ -389,6 +380,10 @@ function getStakeValue(row: StrategyBetPerformanceRow) {
     toNullableNumber(row.actual_amount_usdc) ??
     toNullableNumber(row.theoretical_stake_usdc)
   );
+}
+
+function getBookmakerProbabilityValue(row: StrategyBetPerformanceRow) {
+  return toNullableNumber(row.selected_gmean);
 }
 
 function isDuplicateLiveSkip(row: StrategyBetPerformanceRow) {
@@ -781,8 +776,7 @@ function getRunDurationSeconds(run: SourceRunRow) {
 
 function formatAveragePerRun(value: number) {
   return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: value < 10 ? 2 : 1,
-    minimumFractionDigits: value < 10 ? 2 : 1,
+    maximumFractionDigits: 0,
   }).format(value);
 }
 
@@ -953,10 +947,12 @@ function buildRecentBets(rows: StrategyBetPerformanceRow[]) {
 
       return {
         amount: getStakeValue(row),
+        bookmakerProbability: getBookmakerProbabilityValue(row),
         errorMessage: getLiveBetErrorMessage(row),
         eventEndAt: row.event_end_time,
         id: row.fact_key,
         outcome: row.outcome_label ?? "Unknown outcome",
+        pmProbability: toNullableNumber(row.selected_prob_pm),
         pnl: getActualLivePnlValue(row),
         sharePrice: getSharePriceValue(row),
         status,
@@ -979,9 +975,11 @@ function buildRecentResults(rows: StrategyBetPerformanceRow[]) {
     })
     .map((row) => ({
       betAt: row.first_successful_attempted_at ?? row.collected_at_poly ?? row.collected_at_event,
+      bookmakerProbability: getBookmakerProbabilityValue(row),
       eventEndAt: row.event_end_time ?? row.settled_at,
       id: row.fact_key,
       matchLabel: `${row.pm_team_1 ?? "Unknown"} vs ${row.pm_team_2 ?? "Unknown"}`,
+      pmProbability: toNullableNumber(row.selected_prob_pm),
       pnl: getActualLivePnlValue(row),
       resolvedOutcome: row.resolved_outcome_label,
       result: getLiveResultState(row) ?? "unknown",
@@ -1100,7 +1098,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
     generatedAt: new Date().toISOString(),
     health: {
       jobs: {
-        averageLabel: "0.00 analyzed / run",
+        averageLabel: "0 analyzed / run",
         count: 0,
         detail: "No data",
         failedCount: 0,
@@ -1108,7 +1106,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
         status: "unhealthy",
       },
       liveBets: {
-        averageLabel: "0.00 bets / run",
+        averageLabel: "0 bets / run",
         count: 0,
         detail: "No data",
         failedCount: 0,
@@ -1141,7 +1139,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
 }
 
 export function getRangeFromSearch(value: string | string[] | undefined) {
-  return clampRange(value);
+  return parseDashboardRange(value);
 }
 
 export async function getDashboardData(rangeDays: DashboardRange): Promise<DashboardData> {

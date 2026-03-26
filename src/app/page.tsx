@@ -3,19 +3,17 @@ import { connection } from "next/server";
 
 import { UnlockGate } from "@/components/auth/unlock-gate";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
-import { getDashboardData, getRangeFromSearch } from "@/lib/dashboard";
+import { getDashboardData } from "@/lib/dashboard";
+import {
+  DASHBOARD_RANGE_COOKIE,
+  parseDashboardRange,
+} from "@/lib/dashboard-range";
 import {
   DASHBOARD_UNLOCK_COOKIE,
   DASHBOARD_UNLOCK_TOKEN,
 } from "@/lib/site-lock";
 
-type HomePageProps = {
-  searchParams: Promise<{
-    range?: string | string[] | undefined;
-  }>;
-};
-
-export default async function Home({ searchParams }: HomePageProps) {
+export default async function Home() {
   await connection();
 
   const cookieStore = await cookies();
@@ -26,8 +24,7 @@ export default async function Home({ searchParams }: HomePageProps) {
     return <UnlockGate />;
   }
 
-  const params = await searchParams;
-  const range = getRangeFromSearch(params.range);
+  const range = parseDashboardRange(cookieStore.get(DASHBOARD_RANGE_COOKIE)?.value);
   const data = await getDashboardData(range);
 
   return <DashboardView data={data} />;
