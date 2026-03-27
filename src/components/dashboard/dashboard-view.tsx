@@ -56,27 +56,31 @@ export function DashboardView({ data }: DashboardViewProps) {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-3 py-3 sm:px-6 sm:py-6 lg:px-8">
-      <section className="px-1 py-2">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 py-4 sm:gap-4 sm:px-6 sm:py-6 lg:px-8">
+      <section className="py-2">
+        <div className="flex items-center justify-between gap-3 lg:gap-4">
           <div>
             <h1 className="text-2xl font-semibold tracking-[-0.05em] text-slate-950 sm:text-3xl">
               Polygon
             </h1>
           </div>
-          <RangeSwitcher
-            activeRange={data.rangeDays}
-            pendingRange={pendingRange}
-            onRefreshError={() => setPendingRange(null)}
-            onRefreshStart={setPendingRange}
-          />
+          <div className="shrink-0">
+            <RangeSwitcher
+              activeRange={data.rangeDays}
+              pendingRange={pendingRange}
+              onRefreshError={() => setPendingRange(null)}
+              onRefreshStart={setPendingRange}
+            />
+          </div>
         </div>
       </section>
 
-      <section className="grid grid-cols-2 items-stretch gap-3 xl:grid-cols-4">
-        <HealthMetricCard chip={data.health.jobs} />
-        <HealthMetricCard chip={data.health.liveBets} />
-        <div className="col-span-2 h-full">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)] xl:items-stretch">
+        <div className="grid grid-cols-2 gap-3 xl:col-span-2 xl:h-full">
+          <HealthMetricCard chip={data.health.jobs} />
+          <HealthMetricCard chip={data.health.liveBets} />
+        </div>
+        <div className="h-full xl:col-start-3">
           {isRangeRefreshing ? (
             <ResultsCardLoading />
           ) : (
@@ -90,7 +94,7 @@ export function DashboardView({ data }: DashboardViewProps) {
       </section>
 
       <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <section className="surface w-full rounded-[28px] p-4">
+        <section className="surface w-full overflow-hidden rounded-[28px] p-4 sm:p-5">
           <div className="mb-3">
             <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
               Ongoing live bets
@@ -109,14 +113,40 @@ export function DashboardView({ data }: DashboardViewProps) {
               data.recentBets.map((bet) => (
                 <div
                   key={bet.id}
-                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5"
+                  className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-2 sm:flex sm:items-start sm:justify-between sm:gap-3 sm:space-y-0">
                     <div className="min-w-0 space-y-0.5">
-                      <p className="truncate text-sm font-semibold leading-5 text-slate-950">
+                      <p className="text-sm font-semibold leading-5 text-slate-950 sm:truncate">
                         {bet.teamOne} vs {bet.teamTwo}
                       </p>
-                      <p className="truncate text-sm leading-5 text-slate-600">
+                      <p className="break-words text-sm leading-6 text-slate-600 sm:hidden">
+                        <span>{bet.strategy}</span>
+                        <span className="mx-1.5 text-slate-400">-</span>
+                        <span>{bet.outcome}</span>
+                        {shouldShowInlineBetAmount(bet.status) ? (
+                          <>
+                            <span className="mx-1.5 text-slate-400">-</span>
+                            <span className="font-medium text-slate-900">
+                              {formatValue(bet.pnl ?? bet.amount)}
+                            </span>
+                          </>
+                        ) : null}
+                        {bet.sharePrice !== null ? (
+                          <>
+                            <span className="mx-1.5 text-slate-400">-</span>
+                            <span className="text-slate-500">
+                              {formatCurrency(bet.sharePrice, 2)}/share
+                            </span>
+                          </>
+                        ) : null}
+                      </p>
+                      <p className="text-sm leading-6 text-slate-500 sm:hidden">
+                        PM {formatProbabilityValue(bet.pmProbability)}{" "}
+                        <span className="mx-1.5 text-slate-400">-</span>
+                        Books {formatProbabilityValue(bet.bookmakerProbability)}
+                      </p>
+                      <p className="hidden truncate text-sm leading-5 text-slate-600 sm:block">
                         <span>{bet.strategy}</span>
                         <span className="mx-1.5 text-slate-400">-</span>
                         <span>{bet.outcome}</span>
@@ -155,7 +185,7 @@ export function DashboardView({ data }: DashboardViewProps) {
                         )}
                       </p>
                     </div>
-                    <div className="shrink-0 space-y-0.5 text-right">
+                    <div className="flex items-center justify-between gap-3 sm:shrink-0 sm:block sm:space-y-0.5 sm:text-right">
                       <div>
                         <StatusBadge
                           label={getLiveBetBadgeLabel(bet.amount, bet.status)}
@@ -211,7 +241,9 @@ function ResultsCard({
           : "text-slate-900";
 
   return (
-    <section className={cn("surface flex h-full w-full flex-col rounded-[28px] p-4", className)}>
+    <section
+      className={cn("surface flex h-full w-full flex-col overflow-hidden rounded-[28px] p-4 sm:p-5", className)}
+    >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
@@ -225,7 +257,7 @@ function ResultsCard({
           <ShieldCheck className="h-4 w-4" />
         </div>
       </div>
-      <div className="px-1">
+      <div>
         <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1">
           <p className={headlineNumberClass}>
             {formatPercent(summary.winRate)}
@@ -264,7 +296,7 @@ function ResultsCard({
 
 function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
   return (
-    <section className="surface w-full rounded-[28px] p-4">
+    <section className="surface w-full overflow-hidden rounded-[28px] p-4 sm:p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
@@ -288,7 +320,7 @@ function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
           runs.map((run) => (
             <div
               key={run.id}
-              className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2"
+              className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
             >
               <div className="flex items-center justify-between gap-3">
                 <p className="min-w-0 truncate text-sm font-semibold text-slate-950">
@@ -296,7 +328,7 @@ function JobsCard({ runs }: { runs: DashboardJobRun[] }) {
                 </p>
                 <StatusBadge status={run.status} />
               </div>
-              <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">
+              <div className="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                 <span>{formatDurationSeconds(run.durationSeconds)}</span>
                 <span>
                   {formatCompactNumber(run.placedCount)} placed ·{" "}
@@ -382,7 +414,7 @@ function ResultsTable({
   }, [results]);
 
   return (
-    <section className="surface w-full rounded-[28px] p-4 sm:p-5">
+    <section className="surface w-full overflow-hidden rounded-[28px] p-4 sm:p-5">
       <div className="mb-4">
         <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
           Result bets
@@ -408,7 +440,7 @@ function ResultsTable({
               return (
                 <div
                   key={result.id}
-                  className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
+                  className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -603,10 +635,13 @@ function HealthMetricCard({ chip }: { chip: DashboardHealthChip }) {
             {primarySuffix}
           </span>
         </p>
-        <span className="text-[11px] uppercase tracking-[0.14em] text-slate-400">
+        <span className="hidden text-[11px] uppercase tracking-[0.14em] text-slate-400 sm:inline">
           in last 48h
         </span>
       </div>
+      <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-400 sm:hidden">
+        in last 48h
+      </p>
       <p className={cn("mt-1 text-sm font-medium", accentColor)}>
         {secondaryValue}
       </p>

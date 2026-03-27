@@ -358,20 +358,7 @@ function getActualLivePnlValue(row: StrategyBetPerformanceRow) {
 }
 
 function getSharePriceValue(row: StrategyBetPerformanceRow) {
-  const explicitEntryPrice = toNullableNumber(row.actual_entry_price);
-
-  if (explicitEntryPrice !== null) {
-    return explicitEntryPrice;
-  }
-
-  const shares = toNullableNumber(row.actual_shares) ?? toNullableNumber(row.theoretical_shares);
-  const stake = getStakeValue(row);
-
-  if (shares !== null && shares > 0 && stake !== null) {
-    return stake / shares;
-  }
-
-  return toNullableNumber(row.selected_prob_pm);
+  return toNullableNumber(row.actual_entry_price);
 }
 
 function getStakeValue(row: StrategyBetPerformanceRow) {

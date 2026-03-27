@@ -31,7 +31,7 @@ function HealthMetricCardLoading() {
 
 export function ResultsCardLoading() {
   return (
-    <section className="surface animate-pulse rounded-[28px] p-4">
+    <section className="surface animate-pulse overflow-hidden rounded-[28px] p-4 sm:p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <SkeletonLine className="h-6 w-20" />
@@ -65,22 +65,22 @@ export function ResultsCardLoading() {
 
 function RecentLiveBetsLoading() {
   return (
-    <section className="surface w-full animate-pulse rounded-[28px] p-4">
+    <section className="surface w-full animate-pulse overflow-hidden rounded-[28px] p-4 sm:p-5">
       <SkeletonLine className="h-6 w-36" />
       <SkeletonLine className="mt-2 h-4 w-44" />
       <div className="mt-3 grid gap-1.5">
         {Array.from({ length: 4 }).map((_, index) => (
           <div
             key={index}
-            className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2.5"
+            className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2 sm:flex sm:items-start sm:justify-between sm:gap-3 sm:space-y-0">
               <div className="min-w-0 flex-1 space-y-2">
                 <SkeletonLine className="h-5 w-40" />
                 <SkeletonLine className="h-4 w-56 max-w-full" />
                 <SkeletonLine className="h-4 w-32" />
               </div>
-              <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3 sm:block sm:space-y-2">
                 <SkeletonLine className="h-7 w-20" />
                 <SkeletonLine className="ml-auto h-4 w-16" />
               </div>
@@ -94,7 +94,7 @@ function RecentLiveBetsLoading() {
 
 function JobsCardLoading() {
   return (
-    <section className="surface w-full animate-pulse rounded-[28px] p-4">
+    <section className="surface w-full animate-pulse overflow-hidden rounded-[28px] p-4 sm:p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <SkeletonLine className="h-6 w-14" />
@@ -108,13 +108,13 @@ function JobsCardLoading() {
         {Array.from({ length: 5 }).map((_, index) => (
           <div
             key={index}
-            className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-2"
+            className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
           >
             <div className="flex items-center justify-between gap-3">
               <SkeletonLine className="h-5 w-36" />
               <SkeletonLine className="h-6 w-16" />
             </div>
-            <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
               <SkeletonLine className="h-4 w-16" />
               <SkeletonLine className="h-4 w-28" />
             </div>
@@ -127,7 +127,7 @@ function JobsCardLoading() {
 
 export function ResultsTableLoading() {
   return (
-    <section className="surface w-full animate-pulse rounded-[28px] p-4 sm:p-5">
+    <section className="surface w-full animate-pulse overflow-hidden rounded-[28px] p-4 sm:p-5">
       <div className="mb-4">
         <SkeletonLine className="h-6 w-24" />
         <SkeletonLine className="mt-2 h-4 w-44" />
@@ -137,7 +137,7 @@ export function ResultsTableLoading() {
         {Array.from({ length: 3 }).map((_, index) => (
           <div
             key={index}
-            className="rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
+            className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-50/70 px-3 py-3"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1 space-y-2">
@@ -192,8 +192,8 @@ export function ResultsTableLoading() {
 
 export function DashboardLoading() {
   return (
-    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 px-3 py-3 sm:px-6 sm:py-6 lg:px-8">
-      <section className="px-1 py-2">
+    <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 py-4 sm:gap-4 sm:px-6 sm:py-6 lg:px-8">
+      <section className="py-2">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <SkeletonLine className="h-8 w-24" />
@@ -202,10 +202,12 @@ export function DashboardLoading() {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 items-stretch gap-3 xl:grid-cols-4">
-        <HealthMetricCardLoading />
-        <HealthMetricCardLoading />
-        <div className="col-span-2">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)] xl:items-stretch">
+        <div className="grid grid-cols-2 gap-3 xl:col-span-2 xl:h-full">
+          <HealthMetricCardLoading />
+          <HealthMetricCardLoading />
+        </div>
+        <div className="xl:col-start-3">
           <ResultsCardLoading />
         </div>
       </section>
