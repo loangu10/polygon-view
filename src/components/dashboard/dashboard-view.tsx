@@ -362,15 +362,16 @@ function ResultsTable({
           result.bookmakerProbability === null,
       )
       .map((result) => result.id);
+    const unresolvedOddsIds = missingOddsIds.filter((id) => !(id in oddsById));
 
-    if (missingOddsIds.length === 0) {
+    if (unresolvedOddsIds.length === 0) {
       return;
     }
 
     let isCancelled = false;
 
     void fetch("/api/result-odds", {
-      body: JSON.stringify({ ids: missingOddsIds }),
+      body: JSON.stringify({ ids: unresolvedOddsIds }),
       headers: {
         "content-type": "application/json",
       },
@@ -393,17 +394,28 @@ function ResultsTable({
           return;
         }
 
+        const resolvedOdds = body.odds;
+
         setOddsById(
-          body.odds.reduce<Record<string, { bookmakerProbability: number | null; pmProbability: number | null }>>(
-            (next, item) => {
+          (current) => {
+            const next = { ...current };
+
+            unresolvedOddsIds.forEach((id) => {
+              next[id] ??= {
+                bookmakerProbability: null,
+                pmProbability: null,
+              };
+            });
+
+            resolvedOdds.forEach((item) => {
               next[item.id] = {
                 bookmakerProbability: item.bookmakerProbability,
                 pmProbability: item.pmProbability,
               };
-              return next;
-            },
-            {},
-          ),
+            });
+
+            return next;
+          },
         );
       })
       .catch(() => {});
@@ -411,7 +423,7 @@ function ResultsTable({
     return () => {
       isCancelled = true;
     };
-  }, [results]);
+  }, [oddsById, results]);
 
   return (
     <section className="surface w-full overflow-hidden rounded-[28px] p-4 sm:p-5">

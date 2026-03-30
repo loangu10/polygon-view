@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { NextResponse } from "next/server";
 
 import { fetchSupabaseRows, hasSupabaseConfig } from "@/lib/supabase-rest";
@@ -17,35 +18,52 @@ function toNullableNumber(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+const RESULT_ODDS_REVALIDATE_SECONDS = 45;
+
+const getCachedResultOdds = unstable_cache(
+  async (ids: string[]) => {
+    if (!hasSupabaseConfig() || ids.length === 0) {
+      return [];
+    }
+
+    const rows = await fetchSupabaseRows<ResultOddsRow>(
+      "strategy_bet_performance",
+      {
+        fact_key: `in.(${ids.join(",")})`,
+        select: "fact_key,selected_prob_pm,selected_gmean",
+      },
+      {
+        maxRows: ids.length,
+        revalidateSeconds: RESULT_ODDS_REVALIDATE_SECONDS,
+      },
+    );
+
+    return rows.map((row) => ({
+      bookmakerProbability: toNullableNumber(row.selected_gmean),
+      id: row.fact_key,
+      pmProbability: toNullableNumber(row.selected_prob_pm),
+    }));
+  },
+  ["result-odds"],
+  {
+    revalidate: RESULT_ODDS_REVALIDATE_SECONDS,
+    tags: ["result-odds"],
+  },
+);
+
 export async function POST(request: Request) {
   if (!hasSupabaseConfig()) {
     return NextResponse.json({ odds: [] }, { status: 200 });
   }
 
   const body = (await request.json().catch(() => null)) as { ids?: string[] } | null;
-  const ids = Array.from(new Set((body?.ids ?? []).filter(Boolean))).slice(0, 20);
+  const ids = Array.from(new Set((body?.ids ?? []).filter(Boolean))).sort().slice(0, 20);
 
   if (ids.length === 0) {
     return NextResponse.json({ odds: [] }, { status: 200 });
   }
 
-  const rows = await fetchSupabaseRows<ResultOddsRow>(
-    "strategy_bet_performance",
-    {
-      fact_key: `in.(${ids.join(",")})`,
-      select: "fact_key,selected_prob_pm,selected_gmean",
-    },
-    {
-      maxRows: ids.length,
-      revalidateSeconds: 0,
-    },
-  );
-
   return NextResponse.json({
-    odds: rows.map((row) => ({
-      bookmakerProbability: toNullableNumber(row.selected_gmean),
-      id: row.fact_key,
-      pmProbability: toNullableNumber(row.selected_prob_pm),
-    })),
+    odds: await getCachedResultOdds(ids),
   });
 }

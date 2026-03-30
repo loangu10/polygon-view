@@ -3,6 +3,7 @@ import {
   fetchSupabaseRows,
   hasSupabaseConfig,
 } from "@/lib/supabase-rest";
+import { unstable_cache } from "next/cache";
 import { type DashboardRange, parseDashboardRange } from "@/lib/dashboard-range";
 
 export type DashboardMetric = {
@@ -164,8 +165,8 @@ type SourceRunRow = {
 };
 
 type BetsToPlaceRow = {
+  bet_06: number | string | null;
   collected_at_poly: string | null;
-  match_id: number | string | null;
 };
 
 type DashboardSummary = {
@@ -186,7 +187,7 @@ type DashboardQueryValue = boolean | number | string | null | undefined;
 const DASHBOARD_PAGE_SIZE = 500;
 const DASHBOARD_REVALIDATE_SECONDS = 45;
 const RECENT_WINDOW_SCAN_LIMIT = 250;
-const RUN_SNAPSHOT_MATCH_WINDOW_MINUTES = 90;
+const RUN_BATCH_MATCH_WINDOW_MINUTES = 5;
 
 const SUMMARY_SELECT =
   "fact_key,collected_at_poly,collected_at_event,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
@@ -224,10 +225,6 @@ function addMinutes(date: Date, minutes: number) {
   const next = new Date(date);
   next.setUTCMinutes(next.getUTCMinutes() + minutes);
   return next;
-}
-
-function subtractMinutes(date: Date, minutes: number) {
-  return addMinutes(date, -minutes);
 }
 
 function relativeDelta(current: number, previous: number) {
@@ -761,13 +758,14 @@ function getRunDurationSeconds(run: SourceRunRow) {
   ) / 1000;
 }
 
-function formatAveragePerRun(value: number) {
+function formatAveragePerRun(value: number, fractionDigits = 0) {
   return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 0,
+    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: fractionDigits,
   }).format(value);
 }
 
-async function fetchPlacedCountsByRun(sourceRuns: SourceRunRow[]) {
+async function fetchBatchCountsByRun(sourceRuns: SourceRunRow[]) {
   const runStarts = sourceRuns.map((run) => run.run_started_at).filter(Boolean);
 
   if (runStarts.length === 0) {
@@ -782,33 +780,17 @@ async function fetchPlacedCountsByRun(sourceRuns: SourceRunRow[]) {
   });
   const latestRunStart = sortedRunStarts[0];
   const oldestRunStart = sortedRunStarts[sortedRunStarts.length - 1];
-  const rangeStart = subtractMinutes(
-    new Date(oldestRunStart),
-    RUN_SNAPSHOT_MATCH_WINDOW_MINUTES,
-  ).toISOString();
+  const rangeStart = new Date(oldestRunStart).toISOString();
   const rangeEnd = addMinutes(
     new Date(latestRunStart),
-    RUN_SNAPSHOT_MATCH_WINDOW_MINUTES,
+    RUN_BATCH_MATCH_WINDOW_MINUTES,
   ).toISOString();
 
-  const placedRows = await fetchSupabaseRows<StrategyBetPerformanceRow>(
-    "strategy_bet_performance",
-    {
-      and: `(collected_at_event.gte.${rangeStart},collected_at_event.lte.${rangeEnd})`,
-      live_bet_placed: "eq.true",
-      select: "collected_at_event,signal_count",
-    },
-    {
-      pageSize: 250,
-      revalidateSeconds: DASHBOARD_REVALIDATE_SECONDS,
-    },
-  );
-
-  const analyzedRows = await fetchSupabaseRows<BetsToPlaceRow>(
+  const batchRows = await fetchSupabaseRows<BetsToPlaceRow>(
     "bets_to_place",
     {
       and: `(collected_at_poly.gte.${rangeStart},collected_at_poly.lte.${rangeEnd})`,
-      select: "collected_at_poly,match_id",
+      select: "collected_at_poly,bet_06",
     },
     {
       pageSize: 250,
@@ -816,75 +798,56 @@ async function fetchPlacedCountsByRun(sourceRuns: SourceRunRow[]) {
     },
   );
 
-  const placedSnapshotCounts = placedRows.reduce((counts, row) => {
-    if (!row.collected_at_event) {
-      return counts;
+  const batchStats = batchRows.reduce((stats, row) => {
+    if (!row.collected_at_poly) {
+      return stats;
     }
 
-    const nextPlacedCount =
-      (counts.get(row.collected_at_event) ?? 0) +
-      (toNullableNumber(row.signal_count) ?? 1);
-    counts.set(row.collected_at_event, nextPlacedCount);
-    return counts;
-  }, new Map<string, number>());
+    const current = stats.get(row.collected_at_poly) ?? {
+      analyzedCount: 0,
+      placedCount: 0,
+    };
+    const betCode = toNullableNumber(row.bet_06);
 
-  const analyzedKeys = analyzedRows.reduce((counts, row) => {
-    if (!row.collected_at_poly || row.match_id === null || row.match_id === undefined) {
-      return counts;
+    current.analyzedCount += 1;
+
+    if (betCode !== null && [0, 1, 2].includes(betCode)) {
+      current.placedCount += 1;
     }
 
-    const currentKeys = counts.get(row.collected_at_poly) ?? new Set<string>();
-    currentKeys.add(String(row.match_id));
-    counts.set(row.collected_at_poly, currentKeys);
-    return counts;
-  }, new Map<string, Set<string>>());
+    stats.set(row.collected_at_poly, current);
+    return stats;
+  }, new Map<string, { analyzedCount: number; placedCount: number }>());
 
-  const analyzedSnapshotCounts = new Map(
-    Array.from(analyzedKeys.entries()).map(([snapshotAt, keys]) => [snapshotAt, keys.size]),
-  );
-
-  function matchSnapshotCounts(snapshotCounts: Map<string, number>) {
-    const usedSnapshotTimes = new Set<string>();
-    const snapshots = Array.from(snapshotCounts.entries()).map(([timestamp, count]) => ({
-      count,
+  const batches = Array.from(batchStats.entries())
+    .map(([timestamp, counts]) => ({
+      analyzedCount: counts.analyzedCount,
+      placedCount: counts.placedCount,
       time: new Date(timestamp).getTime(),
       timestamp,
-    }));
-    const matchedCounts = new Map<string, number>();
+    }))
+    .sort((left, right) => left.time - right.time);
 
-    sourceRuns.forEach((run) => {
-      const exactCount = snapshotCounts.get(run.run_started_at);
-      if (exactCount !== undefined) {
-        matchedCounts.set(run.run_started_at, exactCount);
-        usedSnapshotTimes.add(run.run_started_at);
-        return;
-      }
+  const analyzedCounts = new Map<string, number>();
+  const placedCounts = new Map<string, number>();
 
-      const runTime = new Date(run.run_started_at).getTime();
-      const nearestSnapshot = snapshots
-        .filter((snapshot) => !usedSnapshotTimes.has(snapshot.timestamp))
-        .filter(
-          (snapshot) =>
-            Math.abs(snapshot.time - runTime) <=
-            RUN_SNAPSHOT_MATCH_WINDOW_MINUTES * 60 * 1000,
-        )
-        .sort((left, right) => Math.abs(left.time - runTime) - Math.abs(right.time - runTime))[0];
+  sourceRuns.forEach((run) => {
+    const runTime = new Date(run.run_started_at).getTime();
+    const windowEnd = addMinutes(
+      new Date(run.run_started_at),
+      RUN_BATCH_MATCH_WINDOW_MINUTES,
+    ).getTime();
+    const matchedBatch = batches.find(
+      (batch) => batch.time >= runTime && batch.time < windowEnd,
+    );
 
-      if (nearestSnapshot) {
-        matchedCounts.set(run.run_started_at, nearestSnapshot.count);
-        usedSnapshotTimes.add(nearestSnapshot.timestamp);
-        return;
-      }
-
-      matchedCounts.set(run.run_started_at, 0);
-    });
-
-    return matchedCounts;
-  }
+    analyzedCounts.set(run.run_started_at, matchedBatch?.analyzedCount ?? 0);
+    placedCounts.set(run.run_started_at, matchedBatch?.placedCount ?? 0);
+  });
 
   return {
-    analyzedCounts: matchSnapshotCounts(analyzedSnapshotCounts),
-    placedCounts: matchSnapshotCounts(placedSnapshotCounts),
+    analyzedCounts,
+    placedCounts,
   };
 }
 
@@ -991,6 +954,31 @@ function getLatestTimestamp(rows: StrategyBetPerformanceRow[]) {
   }, null);
 }
 
+function splitComparisonRows(
+  rows: StrategyBetPerformanceRow[],
+  currentStart: string,
+) {
+  const currentStartTime = new Date(currentStart).getTime();
+
+  return rows.reduce(
+    (groups, row) => {
+      const rowTime = new Date(getWindowTimestamp(row) ?? 0).getTime();
+
+      if (rowTime >= currentStartTime) {
+        groups.currentRows.push(row);
+      } else {
+        groups.previousRows.push(row);
+      }
+
+      return groups;
+    },
+    {
+      currentRows: [] as StrategyBetPerformanceRow[],
+      previousRows: [] as StrategyBetPerformanceRow[],
+    },
+  );
+}
+
 function buildJobsHealth(
   runs: SourceRunRow[],
   analyzedCounts: Map<string, number>,
@@ -1056,7 +1044,7 @@ function buildLiveBetsHealth(
   const averagePlaced = runCount === 0 ? 0 : placedCount / runCount;
 
   return {
-    averageLabel: `${formatAveragePerRun(averagePlaced)} bets / run`,
+    averageLabel: `${formatAveragePerRun(averagePlaced, 2)} bets / run`,
     count: placedCount,
     detail:
       status === "healthy"
@@ -1093,7 +1081,7 @@ function buildErrorData(rangeDays: DashboardRange, notice: string): DashboardDat
         status: "unhealthy",
       },
       liveBets: {
-        averageLabel: "0 bets / run",
+        averageLabel: "0.00 bets / run",
         count: 0,
         detail: "No data",
         failedCount: 0,
@@ -1129,7 +1117,7 @@ export function getRangeFromSearch(value: string | string[] | undefined) {
   return parseDashboardRange(value);
 }
 
-export async function getDashboardData(rangeDays: DashboardRange): Promise<DashboardData> {
+async function getDashboardDataUncached(rangeDays: DashboardRange): Promise<DashboardData> {
   if (!hasSupabaseConfig()) {
     return buildErrorData(
       rangeDays,
@@ -1143,20 +1131,19 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
   const currentStart = subtractDays(now, rangeDays).toISOString();
 
   try {
-    const currentRows = await loadQuery("Current summary window query", () =>
-      fetchStrategyWindowRows(currentStart, {
-        select: SUMMARY_SELECT,
-      }),
-    );
-
-    const previousRows = await loadQuery("Previous summary window query", () =>
-      fetchStrategyWindowRows(comparisonStart, {
-        end: currentStart,
-        select: SUMMARY_SELECT,
-      }),
-    );
-
-    const [recentLiveRows, resultRows, sourceRunsPage, healthRuns, healthLiveBetRows] = await Promise.all([
+    const [
+      comparisonRows,
+      recentLiveRows,
+      resultRows,
+      sourceRunsPage,
+      healthRuns,
+      healthLiveBetRows,
+    ] = await Promise.all([
+      loadQuery("Comparison summary window query", () =>
+        fetchStrategyWindowRows(comparisonStart, {
+          select: SUMMARY_SELECT,
+        }),
+      ),
       loadQuery("Recent live bets query", () =>
         fetchLatestStrategyRows({
           maxRows: RECENT_WINDOW_SCAN_LIMIT,
@@ -1207,9 +1194,13 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
         }),
       ),
     ]);
+    const { currentRows, previousRows } = splitComparisonRows(
+      comparisonRows,
+      currentStart,
+    );
 
-    const runCounts = await loadQuery("Placed bet counts by run query", () =>
-      fetchPlacedCountsByRun(healthRuns),
+    const runCounts = await loadQuery("Batch counts by run query", () =>
+      fetchBatchCountsByRun(healthRuns),
     );
     const updatedAt =
       getLatestTimestamp(currentRows) ??
@@ -1245,4 +1236,22 @@ export async function getDashboardData(rangeDays: DashboardRange): Promise<Dashb
         : `Database connection failed: ${String(error)}`,
     );
   }
+}
+
+const getCachedDashboardData = unstable_cache(
+  async (rangeDays: DashboardRange) => getDashboardDataUncached(rangeDays),
+  ["dashboard-data"],
+  {
+    revalidate: DASHBOARD_REVALIDATE_SECONDS,
+    tags: ["dashboard-data"],
+  },
+);
+
+export async function getDashboardData(rangeDays: DashboardRange): Promise<DashboardData> {
+  const data = await getCachedDashboardData(rangeDays);
+
+  return {
+    ...data,
+    generatedAt: new Date().toISOString(),
+  };
 }

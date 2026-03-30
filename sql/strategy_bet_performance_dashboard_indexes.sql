@@ -34,3 +34,10 @@ CREATE INDEX IF NOT EXISTS idx_sbp_live_results_event_fallback
 CREATE INDEX IF NOT EXISTS idx_sbp_source_run_placed
     ON strategy_bet_performance (collected_at_event)
     WHERE live_bet_placed = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_source_runs_started_at_desc
+    ON source_runs (run_started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_bets_to_place_collected_at_poly_desc
+    ON bets_to_place (collected_at_poly DESC)
+    INCLUDE (bet_06);
