@@ -97,17 +97,17 @@ export function DashboardView({ data }: DashboardViewProps) {
         <section className="surface w-full overflow-hidden rounded-[28px] p-4 sm:p-5">
           <div className="mb-3">
             <h2 className="text-base font-semibold tracking-[-0.03em] text-slate-950">
-              Ongoing live bets
+              Pending live bets
             </h2>
             <p className="mt-1 text-xs text-slate-600">
-              {formatCompactNumber(data.recentBets.length)} ongoing bets or failed attempts
+              Showing {formatCompactNumber(data.recentBets.length)} pending bets in the selected period
             </p>
           </div>
           <div className="grid gap-1.5">
             {data.recentBets.length === 0 ? (
               <EmptyState
-                message="No ongoing live bets or failed attempts were returned in the selected period."
-                title="No recent live bets"
+                message="No pending live bets were returned in the selected period."
+                title="No pending live bets"
               />
             ) : (
               data.recentBets.map((bet) => (
@@ -231,12 +231,13 @@ function ResultsCard({
   rangeDays: DashboardRange;
   summary: DashboardResultsSummary;
 }) {
-  const benefitTone =
-    summary.benefit === null
+  const realizedPnl = Number.isFinite(summary.realizedPnl) ? summary.realizedPnl : null;
+  const realizedPnlTone =
+    realizedPnl === null
       ? "text-slate-900"
-      : summary.benefit > 0
+      : realizedPnl > 0
         ? "text-emerald-700"
-        : summary.benefit < 0
+        : realizedPnl < 0
           ? "text-rose-700"
           : "text-slate-900";
 
@@ -250,7 +251,7 @@ function ResultsCard({
             Results
           </h2>
           <p className="mt-1 text-xs text-slate-600">
-            Live bets over past {rangeDays}d
+            Placed in past {rangeDays}d. Win rate and PnL use settled bets only.
           </p>
         </div>
         <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-2 text-slate-700">
@@ -283,11 +284,16 @@ function ResultsCard({
         <CompactResultStat
           label="Pending"
           value={formatCompactNumber(summary.pending)}
+          detail={
+            summary.pendingStake > 0 ? `${formatCurrency(summary.pendingStake, 2)} open stake` : undefined
+          }
         />
         <CompactResultStat
-          label="Benefit"
-          tone={benefitTone}
-          value={summary.benefit === null ? "No PnL yet" : formatCurrency(summary.benefit, 2)}
+          label="Realized"
+          tone={realizedPnlTone}
+          value={
+            realizedPnl === null ? "No PnL yet" : formatCurrency(realizedPnl, 2)
+          }
         />
       </div>
     </section>
@@ -432,7 +438,7 @@ function ResultsTable({
           Result bets
         </h2>
         <p className="mt-1 text-xs text-slate-600">
-          Settled bets over past {rangeDays}d
+          Settled bets over past {rangeDays}d. Times show successful placement and final settlement.
         </p>
       </div>
       {results.length === 0 ? (
@@ -473,25 +479,30 @@ function ResultsTable({
                     <StatusBadge status={result.result} />
                   </div>
                   <div className="mt-2 grid gap-1 text-xs text-slate-500">
-                    <p>Bet at <LocalDateTime value={result.betAt} /></p>
-                    <p>Finished <LocalDateTime value={result.eventEndAt} /></p>
+                    <p>Placed at <LocalDateTime value={result.betAt} /></p>
+                    <p>Settled at <LocalDateTime value={result.finishedAt} /></p>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-3 text-sm">
                     <span className="text-slate-500">P&amp;L</span>
-                    <span
-                      className={cn(
-                        "font-semibold",
-                        result.pnl === null
-                          ? "text-slate-900"
-                          : result.pnl > 0
-                            ? "text-emerald-700"
-                            : result.pnl < 0
-                              ? "text-rose-700"
-                              : "text-slate-900",
-                      )}
-                    >
-                      {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
-                    </span>
+                    <div className="text-right">
+                      <span
+                        className={cn(
+                          "font-semibold",
+                          result.pnl === null
+                            ? "text-slate-900"
+                            : result.pnl > 0
+                              ? "text-emerald-700"
+                              : result.pnl < 0
+                                ? "text-rose-700"
+                                : "text-slate-900",
+                        )}
+                      >
+                        {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                      </span>
+                      {result.pnl !== null && result.pnlIsEstimated ? (
+                        <p className="text-[11px] text-slate-500">Estimated</p>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               );
@@ -504,8 +515,8 @@ function ResultsTable({
               <tr className="text-left text-[11px] uppercase tracking-[0.14em] text-slate-400">
                 <th className="px-3 py-1 font-medium">Match</th>
                 <th className="px-3 py-1 font-medium">Bet</th>
-                <th className="px-3 py-1 font-medium">Bet at</th>
-                <th className="px-3 py-1 font-medium">Finished</th>
+                <th className="px-3 py-1 font-medium">Placed at</th>
+                <th className="px-3 py-1 font-medium">Settled at</th>
                 <th className="px-3 py-1 font-medium">Odds</th>
                 <th className="px-3 py-1 font-medium">Win/Loss</th>
                 <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
@@ -540,7 +551,7 @@ function ResultsTable({
                         <LocalDateTime value={result.betAt} />
                       </td>
                       <td className="px-3 py-3 text-slate-500">
-                        <LocalDateTime value={result.eventEndAt} />
+                        <LocalDateTime value={result.finishedAt} />
                       </td>
                       <td className="px-3 py-3">
                         <div className="text-xs leading-5 text-slate-500">
@@ -563,7 +574,12 @@ function ResultsTable({
                                 : "text-slate-900",
                         )}
                       >
-                        {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
+                        <div>
+                          <p>{result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}</p>
+                          {result.pnl !== null && result.pnlIsEstimated ? (
+                            <p className="mt-0.5 text-[11px] font-normal text-slate-500">Estimated</p>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -594,10 +610,12 @@ function formatProbabilityValue(value: number | null | undefined) {
 }
 
 function CompactResultStat({
+  detail,
   label,
   tone,
   value,
 }: {
+  detail?: string;
   label: string;
   tone?: string;
   value: string;
@@ -608,6 +626,7 @@ function CompactResultStat({
         {label}
       </p>
       <p className={cn("mt-0.5 text-sm font-semibold", tone ?? "text-slate-950")}>{value}</p>
+      {detail ? <p className="mt-0.5 text-[11px] text-slate-500">{detail}</p> : null}
     </div>
   );
 }
