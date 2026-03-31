@@ -438,7 +438,7 @@ function ResultsTable({
           Result bets
         </h2>
         <p className="mt-1 text-xs text-slate-600">
-          Settled bets over past {rangeDays}d. Times show successful placement and final settlement.
+          Settled bets over past {rangeDays}d. Times show successful placement and final settlement. P&amp;L is net profit/loss.
         </p>
       </div>
       {results.length === 0 ? (
@@ -483,7 +483,7 @@ function ResultsTable({
                     <p>Settled at <LocalDateTime value={result.finishedAt} /></p>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                    <span className="text-slate-500">P&amp;L</span>
+                    <span className="text-slate-500">Net P&amp;L</span>
                     <div className="text-right">
                       <span
                         className={cn(
@@ -500,7 +500,7 @@ function ResultsTable({
                         {result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}
                       </span>
                       {result.pnl !== null && result.pnlIsEstimated ? (
-                        <p className="text-[11px] text-slate-500">Estimated</p>
+                        <p className="text-[11px] text-slate-500">Estimated from signal odds</p>
                       ) : null}
                     </div>
                   </div>
@@ -519,7 +519,7 @@ function ResultsTable({
                 <th className="px-3 py-1 font-medium">Settled at</th>
                 <th className="px-3 py-1 font-medium">Odds</th>
                 <th className="px-3 py-1 font-medium">Win/Loss</th>
-                <th className="px-3 py-1 text-right font-medium">P&amp;L</th>
+                <th className="px-3 py-1 text-right font-medium">Net P&amp;L</th>
               </tr>
             </thead>
               <tbody>
@@ -577,7 +577,7 @@ function ResultsTable({
                         <div>
                           <p>{result.pnl === null ? "No PnL yet" : formatCurrency(result.pnl, 2)}</p>
                           {result.pnl !== null && result.pnlIsEstimated ? (
-                            <p className="mt-0.5 text-[11px] font-normal text-slate-500">Estimated</p>
+                            <p className="mt-0.5 text-[11px] font-normal text-slate-500">Estimated from signal odds</p>
                           ) : null}
                         </div>
                       </td>

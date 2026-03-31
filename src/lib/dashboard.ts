@@ -133,6 +133,7 @@ type StrategyBetPerformanceRow = {
   live_bet_settled: boolean | null;
   live_bet_won_flag: number | boolean | null;
   last_execution_status: string | null;
+  last_execution_response_log: ExecutionResponseLog | null;
   last_error_message: string | null;
   last_attempted_at: string | null;
   loss_flag: number | boolean | null;
@@ -149,6 +150,7 @@ type StrategyBetPerformanceRow = {
   source_bet_id: string | null;
   sport: string | null;
   settlement_status: string | null;
+  successful_execution_response_log: ExecutionResponseLog | null;
   strategy_name: string | null;
   strategy_threshold: number | string | null;
   theoretical_roi: number | string | null;
@@ -157,6 +159,17 @@ type StrategyBetPerformanceRow = {
   theoretical_stake_usdc: number | string | null;
   win_flag: number | boolean | null;
 };
+
+type ExecutionResponseLog = {
+  order?: {
+    makingAmount?: string;
+    takingAmount?: string;
+  } | null;
+  order_lookup?: {
+    price?: string;
+    size_matched?: string;
+  } | null;
+} | null;
 
 type SourceRunRow = {
   errors: unknown;
@@ -209,11 +222,11 @@ const DASHBOARD_REVALIDATE_SECONDS = 45;
 const RUN_BATCH_MATCH_WINDOW_MINUTES = 5;
 
 const SUMMARY_SELECT =
-  "fact_key,collected_at_poly,collected_at_event,event_slug,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
+  "fact_key,collected_at_poly,collected_at_event,event_slug,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,successful_execution_response_log,last_execution_response_log,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
 const RECENT_BETS_SELECT =
-  "fact_key,match_id,collected_at_poly,collected_at_event,first_successful_attempted_at,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_pending_flag,last_execution_status,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,selected_prob_pm,selected_gmean,theoretical_shares";
+  "fact_key,match_id,collected_at_poly,collected_at_event,first_successful_attempted_at,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_pending_flag,last_execution_status,last_execution_response_log,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,successful_execution_response_log,selected_prob_pm,selected_gmean,theoretical_shares";
 const RESULTS_SELECT =
-  "fact_key,collected_at_poly,collected_at_event,event_end_time,event_slug,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,selected_gmean,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
+  "fact_key,collected_at_poly,collected_at_event,event_end_time,event_slug,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,successful_execution_response_log,last_execution_response_log,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,selected_gmean,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
 const HEALTH_LIVE_BETS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,live_bet_attempted,live_bet_placed,live_bet_placement_status,last_execution_status,last_error_message,signal_count";
 
@@ -307,6 +320,60 @@ function getActualLivePnlValue(
   return getActualLivePnlDetails(row, verifiedResult).value;
 }
 
+function getExecutionResponseLog(row: StrategyBetPerformanceRow) {
+  return row.successful_execution_response_log ?? row.last_execution_response_log;
+}
+
+function getLoggedMatchedShares(row: StrategyBetPerformanceRow) {
+  const executionLog = getExecutionResponseLog(row);
+  return (
+    toNullableNumber(executionLog?.order_lookup?.size_matched) ??
+    toNullableNumber(executionLog?.order?.takingAmount)
+  );
+}
+
+function getLoggedCost(row: StrategyBetPerformanceRow) {
+  const executionLog = getExecutionResponseLog(row);
+  return toNullableNumber(executionLog?.order?.makingAmount);
+}
+
+function getLoggedEntryPrice(row: StrategyBetPerformanceRow) {
+  const executionLog = getExecutionResponseLog(row);
+  const directPrice = toNullableNumber(executionLog?.order_lookup?.price);
+
+  if (directPrice !== null) {
+    return directPrice;
+  }
+
+  const loggedCost = getLoggedCost(row);
+  const loggedShares = getLoggedMatchedShares(row);
+
+  if (loggedCost !== null && loggedShares !== null && loggedShares > 0) {
+    return loggedCost / loggedShares;
+  }
+
+  return null;
+}
+
+function isPnlCompatibleWithResult(
+  pnl: number,
+  result: LiveResultState | null | undefined,
+) {
+  if (result === "won") {
+    return pnl >= 0;
+  }
+
+  if (result === "lost") {
+    return pnl <= 0;
+  }
+
+  if (result === "push") {
+    return Math.abs(pnl) < 0.000001;
+  }
+
+  return true;
+}
+
 function getActualLivePnlDetails(
   row: StrategyBetPerformanceRow,
   verifiedResult?: LiveResultState | null,
@@ -314,7 +381,8 @@ function getActualLivePnlDetails(
   const liveResult = getLiveResultState(row, verifiedResult);
   const availableStake =
     toNullableNumber(row.actual_cost_usdc) ??
-    toNullableNumber(row.actual_amount_usdc);
+    toNullableNumber(row.actual_amount_usdc) ??
+    getLoggedCost(row);
   const stake = getStakeValue(row);
 
   if (verifiedResult === "lost" && stake !== null) {
@@ -333,7 +401,7 @@ function getActualLivePnlDetails(
 
   const actualPnl = toNullableNumber(row.actual_realized_pnl_usdc);
 
-  if (actualPnl !== null) {
+  if (actualPnl !== null && isPnlCompatibleWithResult(actualPnl, verifiedResult ?? liveResult)) {
     return {
       estimated: false,
       value: actualPnl,
@@ -342,7 +410,10 @@ function getActualLivePnlDetails(
 
   const estimatedActualPnl = toNullableNumber(row.actual_realized_pnl_estimated_usdc);
 
-  if (estimatedActualPnl !== null) {
+  if (
+    estimatedActualPnl !== null &&
+    isPnlCompatibleWithResult(estimatedActualPnl, verifiedResult ?? liveResult)
+  ) {
     return {
       estimated: true,
       value: estimatedActualPnl,
@@ -351,9 +422,15 @@ function getActualLivePnlDetails(
 
   const shares =
     toNullableNumber(row.actual_shares) ??
+    getLoggedMatchedShares(row) ??
     (() => {
-      const cost = toNullableNumber(row.actual_cost_usdc) ?? toNullableNumber(row.actual_amount_usdc);
-      const entryPrice = toNullableNumber(row.actual_entry_price);
+      const cost =
+        toNullableNumber(row.actual_cost_usdc) ??
+        toNullableNumber(row.actual_amount_usdc) ??
+        getLoggedCost(row);
+      const entryPrice =
+        toNullableNumber(row.actual_entry_price) ??
+        getLoggedEntryPrice(row);
 
       if (cost !== null && entryPrice !== null && entryPrice > 0) {
         return cost / entryPrice;
@@ -385,7 +462,11 @@ function getActualLivePnlDetails(
 
   const theoreticalPnl = toNullableNumber(row.theoretical_pnl_usdc);
 
-  if (liveResult === "won" && theoreticalPnl !== null) {
+  if (
+    liveResult === "won" &&
+    theoreticalPnl !== null &&
+    isPnlCompatibleWithResult(theoreticalPnl, verifiedResult ?? liveResult)
+  ) {
     return {
       estimated: true,
       value: theoreticalPnl,
@@ -399,7 +480,7 @@ function getActualLivePnlDetails(
 }
 
 function getSharePriceValue(row: StrategyBetPerformanceRow) {
-  return toNullableNumber(row.actual_entry_price);
+  return toNullableNumber(row.actual_entry_price) ?? getLoggedEntryPrice(row);
 }
 
 function getFinishedAt(row: StrategyBetPerformanceRow) {
@@ -429,6 +510,7 @@ function getStakeValue(row: StrategyBetPerformanceRow) {
   return (
     toNullableNumber(row.actual_cost_usdc) ??
     toNullableNumber(row.actual_amount_usdc) ??
+    getLoggedCost(row) ??
     toNullableNumber(row.theoretical_stake_usdc)
   );
 }
@@ -523,7 +605,13 @@ async function fetchStrategyWindowRows(
 async function fetchTokenResolutionByEventSlug(
   rows: StrategyBetPerformanceRow[],
 ) {
-  const eventSlugs = [...new Set(rows.map((row) => row.event_slug).filter(Boolean))];
+  const eventSlugs = [
+    ...new Set(
+      rows
+        .map((row) => row.event_slug)
+        .filter((eventSlug): eventSlug is string => Boolean(eventSlug)),
+    ),
+  ];
 
   if (eventSlugs.length === 0) {
     return new Map<string, Map<string, number>>();
