@@ -224,7 +224,7 @@ const RUN_BATCH_MATCH_WINDOW_MINUTES = 5;
 const SUMMARY_SELECT =
   "fact_key,collected_at_poly,collected_at_event,event_slug,is_bet_signal,signal_count,live_bet_placed,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,live_bet_pending_flag,settlement_status,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,successful_execution_response_log,last_execution_response_log,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,theoretical_pnl_usdc,win_flag";
 const RECENT_BETS_SELECT =
-  "fact_key,match_id,collected_at_poly,collected_at_event,first_successful_attempted_at,event_end_time,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_pending_flag,last_execution_status,last_execution_response_log,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,successful_execution_response_log,selected_prob_pm,selected_gmean,theoretical_shares";
+  "fact_key,match_id,collected_at_poly,collected_at_event,first_successful_attempted_at,event_end_time,event_slug,settled_at,strategy_name,outcome_label,pm_team_1,pm_team_2,live_bet_attempted,live_bet_placed,live_bet_placement_status,live_bet_result_status,live_bet_settled,live_bet_pending_flag,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,last_execution_status,last_execution_response_log,last_error_message,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,successful_execution_response_log,selected_prob_pm,selected_gmean,theoretical_shares,settlement_status";
 const RESULTS_SELECT =
   "fact_key,collected_at_poly,collected_at_event,event_end_time,event_slug,settled_at,first_successful_attempted_at,pm_team_1,pm_team_2,outcome_label,resolved_outcome_label,live_bet_placed,live_bet_settled,live_bet_result_status,live_bet_won_flag,live_bet_lost_flag,live_bet_push_flag,actual_amount_usdc,actual_cost_usdc,actual_entry_price,actual_shares,actual_token_id,successful_execution_response_log,last_execution_response_log,theoretical_stake_usdc,theoretical_shares,selected_prob_pm,selected_gmean,actual_realized_pnl_usdc,actual_realized_pnl_estimated_usdc,theoretical_pnl_usdc";
 const HEALTH_LIVE_BETS_SELECT =
@@ -708,6 +708,27 @@ function getLiveResultState(
   return null;
 }
 
+function isPendingLiveBet(
+  row: StrategyBetPerformanceRow,
+  verifiedResult?: LiveResultState | null,
+) {
+  const pendingCount = toNullableNumber(row.live_bet_pending_flag as number | string | null) ?? 0;
+
+  if (row.live_bet_placed !== true || pendingCount <= 0) {
+    return false;
+  }
+
+  if (row.live_bet_settled === true) {
+    return false;
+  }
+
+  if (isSettled(row)) {
+    return false;
+  }
+
+  return getLiveResultState(row, verifiedResult) === null;
+}
+
 function parseGammaList(value: string | null | undefined) {
   if (!value) {
     return [];
@@ -840,13 +861,16 @@ function getResultsSummary(
       total + (getLiveResultState(row, getVerifiedLiveResultState(row, tokenResolutionBySlug)) === "push" ? 1 : 0),
     0,
   );
-  const pending = placedRows.reduce(
-    (total, row) => total + (toNullableNumber(row.live_bet_pending_flag as number | string | null) ?? 0),
-    0,
-  );
-  const pendingStake = placedRows.reduce((total, row) => {
+  const pending = placedRows.reduce((total, row) => {
+    const verifiedResult = getVerifiedLiveResultState(row, tokenResolutionBySlug);
     const pendingCount = toNullableNumber(row.live_bet_pending_flag as number | string | null) ?? 0;
-    return total + (pendingCount > 0 ? getStakeValue(row) ?? 0 : 0);
+
+    return total + (isPendingLiveBet(row, verifiedResult) ? pendingCount : 0);
+  }, 0);
+  const pendingStake = placedRows.reduce((total, row) => {
+    const verifiedResult = getVerifiedLiveResultState(row, tokenResolutionBySlug);
+
+    return total + (isPendingLiveBet(row, verifiedResult) ? (getStakeValue(row) ?? 0) : 0);
   }, 0);
   const settledCount = wins + losses + pushes;
   const pnlValues = placedRows
@@ -1105,13 +1129,12 @@ function buildLatestRuns(
   }));
 }
 
-function buildRecentBets(rows: StrategyBetPerformanceRow[]) {
+function buildRecentBets(
+  rows: StrategyBetPerformanceRow[],
+  tokenResolutionBySlug: Map<string, Map<string, number>>,
+) {
   return rows
-    .filter(
-      (row) =>
-        row.live_bet_placed === true &&
-        (toNullableNumber(row.live_bet_pending_flag as number | string | null) ?? 0) > 0,
-    )
+    .filter((row) => isPendingLiveBet(row, getVerifiedLiveResultState(row, tokenResolutionBySlug)))
     .sort((left, right) => {
       return (
         new Date(getLiveBetTimestamp(right) ?? 0).getTime() -
@@ -1394,7 +1417,6 @@ async function getDashboardDataUncached(rangeDays: DashboardRange): Promise<Dash
         fetchStrategyWindowRows(currentStart, {
           query: {
             live_bet_placed: "eq.true",
-            live_bet_settled: "eq.true",
           },
           select: RESULTS_SELECT,
         }),
@@ -1464,7 +1486,7 @@ async function getDashboardDataUncached(rangeDays: DashboardRange): Promise<Dash
       recentResults: buildRecentResults(resultRows, tokenResolutionBySlug),
       resultsSummary: getResultsSummary(currentRows, tokenResolutionBySlug),
       rangeDays,
-      recentBets: buildRecentBets(recentLiveRows.sort(byNewestWindowTimestamp)),
+      recentBets: buildRecentBets(recentLiveRows.sort(byNewestWindowTimestamp), tokenResolutionBySlug),
       totalCount: currentRows.length + previousRows.length,
       updatedAt,
     };
@@ -1483,7 +1505,7 @@ async function getDashboardDataUncached(rangeDays: DashboardRange): Promise<Dash
 export async function getDashboardData(rangeDays: DashboardRange): Promise<DashboardData> {
   const getCachedDashboardData = unstable_cache(
     async () => getDashboardDataUncached(rangeDays),
-    ["dashboard-data-v4", String(rangeDays)],
+    ["dashboard-data-v5", String(rangeDays)],
     {
       revalidate: DASHBOARD_REVALIDATE_SECONDS,
       tags: ["dashboard-data", `dashboard-data:${rangeDays}`],
